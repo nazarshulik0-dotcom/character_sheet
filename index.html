@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Вітрувій • ЕНТРОПІЯ — Інтерактивна Система</title>
+  <title>Вітрувій • ЕНТРОПІЯ — Мережева Система</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Бібліотека для миттєвої синхронізації між різними пристроями через інтернет -->
+  <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
     body {
@@ -44,27 +46,33 @@
 </head>
 <body class="min-h-screen bg-[#070b12] text-slate-100 selection:bg-cyan-500 selection:text-black">
 
-  <!-- Головний контейнер із вбудованим стартовим екраном (ніколи не буває порожнім) -->
   <div id="app" class="min-h-screen flex flex-col">
     <div class="min-h-screen flex items-center justify-center p-4">
       <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center space-y-3">
         <div class="text-4xl">💠</div>
         <h1 class="text-xl font-black uppercase tracking-wider text-white">ВІТРУВІЙ • ЕНТРОПІЯ</h1>
-        <p class="text-xs text-slate-400">Завантаження інтерактивної системи...</p>
+        <p class="text-xs text-slate-400">Підключення до хмарної кімнати кампанії...</p>
       </div>
     </div>
   </div>
 
-  <!-- Прихований глобальний аудіо-плеєр для синхронізації треків Майстра -->
   <audio id="globalAudioElement" class="hidden" crossorigin="anonymous"></audio>
 
   <script>
     /********************************************************************
      * 1. КОНСТАНТИ СИСТЕМИ «ВІТРУВІЙ • ЕНТРОПІЯ»
      ********************************************************************/
-    const STORAGE_KEY = 'vitruvium_entropia_v8_final';
+    const STORAGE_KEY = 'vitruvium_entropia_v9_cloud';
     const MAP_BASE_URL = 'https://nazarshulik0-dotcom.github.io/entropia_map/';
     const GM_SECRET_PASSWORD = 'ентропія';
+    const DEFAULT_ROOM_CODE = 'entropia-main';
+
+    // Надійні публічні WSS-брокери для синхронізації між телефоном, ноутбуком і ПК
+    const MQTT_BROKERS = [
+      'wss://broker.emqx.io:8084/mqtt',
+      'wss://broker.hivemq.com:8884/mqtt',
+      'wss://test.mosquitto.org:8081/mqtt'
+    ];
 
     const STATS = [
       { id: 'health',      name: "Здоров'я",    icon: '❤️' },
@@ -83,7 +91,6 @@
       'При смерті'
     ];
 
-    // Вбудовані атмосферні звукові генератори секторів Ентропії (працюють без зовнішніх файлів)
     const BUILTIN_AMBIENTS = [
       { id: 'synth_sector0', title: 'Сектор 0: Комплекс «СІЕЛЬ» (Кібер-дрон)', freq1: 110, freq2: 165, lfo: 0.18, type: 'sine' },
       { id: 'synth_sector1', title: 'Сектор 1: Карантинні Сади (Біолюмінесценція)', freq1: 146.8, freq2: 220, lfo: 0.25, type: 'triangle' },
@@ -92,7 +99,6 @@
       { id: 'synth_sector8', title: 'Сектор 8: Токсичні Джунглі (Пульс Скверни)', freq1: 65.4, freq2: 92.5, lfo: 0.45, type: 'triangle' }
     ];
 
-    // Безпечне екранування рядків для HTML-атрибутів та тексту
     function esc(val) {
       if (val === null || val === undefined) return '';
       return String(val)
@@ -122,7 +128,7 @@
     }
 
     /********************************************************************
-     * 3. СТВОРЕННЯ ТА НОРМАЛІЗАЦІЯ ПЕРСОНАЖА
+     * 3. СТВОРЕННЯ ТА НОРМАЛІЗАЦІЯ ПЕРСОНАЖА З МІТКОЮ ЧАСУ (updatedAt)
      ********************************************************************/
     function createBlankCharacter(id, ownerLogin, name, isNpc = false) {
       const stats = {};
@@ -157,7 +163,8 @@
           hideHealth: false,
           hideSkills: false
         },
-        rollLog: []
+        rollLog: [],
+        updatedAt: Date.now()
       };
     }
 
@@ -179,6 +186,7 @@
       base.equipment = String(raw.equipment || '');
       base.backpack = String(raw.backpack || '');
       base.notes = String(raw.notes || '');
+      base.updatedAt = Number(raw.updatedAt) || 1;
 
       STATS.forEach(s => {
         const val = Number(raw.stats?.[s.id]);
@@ -241,33 +249,46 @@
     }
 
     /********************************************************************
-     * 4. ГЛОБАЛЬНИЙ СТАН ДОДАТКА ТА БАЗА ДАНИХ
+     * 4. ГЛОБАЛЬНИЙ СТАН ТА МЕРЕЖЕВА СИНХРОНІЗАЦІЯ МІЖ ПРИСТРОЯМИ
      ********************************************************************/
+    const CLIENT_ID = 'dev_' + Math.random().toString(36).slice(2, 10);
+
     window.state = {
+      roomCode: DEFAULT_ROOM_CODE,
+      firebaseDbUrl: '', // Опціональний URL Firebase Realtime DB
       characters: {},
+      deletedChars: {},  // { charId: timestamp } щоб видалені ГМ персонажі видалялися у всіх
       campaignRollLogs: [],
       audioTracks: [],
       audioState: {
         activeTrackId: null,
         activeTitle: '',
         activeUrl: '',
-        mode: 'none', // 'none' | 'file' | 'url' | 'synth'
+        mode: 'none',
         isPlaying: false,
-        volume: 0.6
+        volume: 0.6,
+        updatedAt: 1
+      },
+      cloud: {
+        status: 'connecting', // 'connecting' | 'online' | 'error'
+        brokerIndex: 0,
+        lastSyncTime: '',
+        cloudModalOpen: false
       },
       session: {
         loggedIn: false,
-        role: 'player',         // 'player' | 'gm'
+        role: 'player',
         loginName: '',
         activeCharId: null,
-        gmCategory: 'players',  // 'players' | 'npcs'
-        activeTab: 'all'        // 'all' | 'skills' | 'inventory' | 'others' | 'log' | 'map' | 'audio'
+        gmCategory: 'players',
+        activeTab: 'all'
       },
       loginForm: {
         role: 'player',
         loginInput: '',
         charNameInput: '',
         gmPasswordInput: '',
+        roomInput: DEFAULT_ROOM_CODE,
         errorMsg: ''
       },
       diceRoller: {
@@ -279,25 +300,27 @@
       },
       ui: {
         skillFormOpen: false,
-        newSkillEffectType: 'active', // 'passive' | 'active' | 'none'
+        newSkillEffectType: 'active',
         privacyPreviewOpen: false,
         simulateOtherView: true,
-        rollLogScope: 'personal',     // 'personal' | 'campaign'
-        mapForceRole: null,           // null (auto) | 'gm' | 'player'
+        rollLogScope: 'personal',
+        mapForceRole: null,
         mapCacheBust: Date.now(),
         mapTall: false
       }
     };
 
-    // Локальні сесійні файли аудіо (Blob URLs)
+    let mqttClient = null;
+    let textSyncTimeout = null;
+    let firebasePollInterval = null;
     const localAudioBlobs = {};
     let webAudioCtx = null;
     let webAudioNodes = [];
 
+    // Читання локального бекапу
     function loadDatabase() {
       try {
-        // Міграція зі старих ключів + читання поточного
-        const keysToTry = [STORAGE_KEY, 'vitruvium_app_v6_stable', 'vitruvium_entropia_v7'];
+        const keysToTry = [STORAGE_KEY, 'vitruvium_entropia_v8_final', 'vitruvium_app_v6_stable'];
         let parsed = null;
 
         for (const k of keysToTry) {
@@ -315,59 +338,373 @@
 
         if (!parsed) return;
 
+        if (parsed.roomCode) {
+          state.roomCode = String(parsed.roomCode).trim().toLowerCase() || DEFAULT_ROOM_CODE;
+          state.loginForm.roomInput = state.roomCode;
+        }
+        if (parsed.firebaseDbUrl) {
+          state.firebaseDbUrl = String(parsed.firebaseDbUrl).trim();
+        }
+        if (parsed.deletedChars && typeof parsed.deletedChars === 'object') {
+          state.deletedChars = parsed.deletedChars;
+        }
         if (parsed.characters && typeof parsed.characters === 'object') {
           const cleanChars = {};
           Object.keys(parsed.characters).forEach(id => {
             const c = parsed.characters[id];
-            if (c) cleanChars[id] = normalizeCharacter(c);
+            if (c && !state.deletedChars[id]) {
+              cleanChars[id] = normalizeCharacter(c);
+            }
           });
           state.characters = cleanChars;
         }
-
         if (Array.isArray(parsed.campaignRollLogs)) {
           state.campaignRollLogs = parsed.campaignRollLogs.filter(Boolean).slice(0, 80);
         }
-
         if (Array.isArray(parsed.audioTracks)) {
           state.audioTracks = parsed.audioTracks.filter(Boolean);
         }
-
         if (parsed.audioState && typeof parsed.audioState === 'object') {
-          state.audioState.activeTrackId = parsed.audioState.activeTrackId || null;
-          state.audioState.activeTitle = parsed.audioState.activeTitle || '';
-          state.audioState.activeUrl = parsed.audioState.activeUrl || '';
-          state.audioState.mode = parsed.audioState.mode || 'none';
-          state.audioState.isPlaying = !!parsed.audioState.isPlaying;
+          state.audioState = {
+            ...state.audioState,
+            ...parsed.audioState
+          };
         }
       } catch (err) {
         console.warn('Помилка читання localStorage:', err);
       }
     }
 
-    function saveDatabase() {
+    // Збереження локально + Відправка в Хмару (іншим пристроям)
+    function saveDatabase(broadcastToCloud = true) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          roomCode: state.roomCode,
+          firebaseDbUrl: state.firebaseDbUrl,
           characters: state.characters,
+          deletedChars: state.deletedChars,
           campaignRollLogs: state.campaignRollLogs,
           audioTracks: state.audioTracks.filter(t => !t.isLocalBlob),
-          audioState: {
-            activeTrackId: state.audioState.activeTrackId,
-            activeTitle: state.audioState.activeTitle,
-            activeUrl: state.audioState.activeUrl,
-            mode: state.audioState.mode,
-            isPlaying: state.audioState.isPlaying
-          }
+          audioState: state.audioState
         }));
       } catch (err) {
-        console.error('Помилка збереження:', err);
+        console.error('Помилка локального збереження:', err);
+      }
+
+      if (broadcastToCloud) {
+        publishStateToCloud();
       }
     }
+
+    // Розумне злиття даних, отриманих з іншого пристрою (телефону/ноутбука)
+    function mergeRemotePayload(payload) {
+      if (!payload || typeof payload !== 'object') return false;
+      let changed = false;
+
+      // 1. Злиття видалених персонажів (tombstones)
+      if (payload.deletedChars && typeof payload.deletedChars === 'object') {
+        Object.keys(payload.deletedChars).forEach(delId => {
+          const delTime = Number(payload.deletedChars[delId]) || 0;
+          const localDelTime = Number(state.deletedChars[delId]) || 0;
+          if (delTime > localDelTime) {
+            state.deletedChars[delId] = delTime;
+          }
+          const existingChar = state.characters[delId];
+          if (existingChar && (Number(existingChar.updatedAt) || 0) <= state.deletedChars[delId]) {
+            delete state.characters[delId];
+            if (state.session.activeCharId === delId) {
+              const rem = Object.values(state.characters).filter(c => !c.isNpc);
+              state.session.activeCharId = rem.length > 0 ? rem[0].id : null;
+            }
+            changed = true;
+          }
+        });
+      }
+
+      // 2. Злиття персонажів за ID та часом оновлення (updatedAt)
+      if (payload.characters && typeof payload.characters === 'object') {
+        Object.keys(payload.characters).forEach(charId => {
+          const incomingRaw = payload.characters[charId];
+          if (!incomingRaw) return;
+          const incoming = normalizeCharacter(incomingRaw);
+          const delTime = Number(state.deletedChars[charId]) || 0;
+          if (delTime >= incoming.updatedAt) return; // Персонаж був видалений
+
+          const local = state.characters[charId];
+          if (!local || incoming.updatedAt > (Number(local.updatedAt) || 0)) {
+            state.characters[charId] = incoming;
+            changed = true;
+          } else if (local) {
+            // Додатково об'єднуємо особистий журнал кидків персонажа
+            const localLogs = Array.isArray(local.rollLog) ? local.rollLog : [];
+            const incLogs = Array.isArray(incoming.rollLog) ? incoming.rollLog : [];
+            if (incLogs.length > localLogs.length) {
+              const seen = new Set(localLogs.map(l => l.id));
+              incLogs.forEach(l => {
+                if (l && l.id && !seen.has(l.id)) {
+                  localLogs.push(l);
+                  changed = true;
+                }
+              });
+              local.rollLog = localLogs.sort((a, b) => String(b.id).localeCompare(String(a.id))).slice(0, 40);
+            }
+          }
+        });
+      }
+
+      // 3. Злиття загального журналу кидків кампанії
+      if (Array.isArray(payload.campaignRollLogs)) {
+        const seenIds = new Set((state.campaignRollLogs || []).map(r => r?.id));
+        let addedLog = false;
+        payload.campaignRollLogs.forEach(r => {
+          if (r && r.id && !seenIds.has(r.id)) {
+            seenIds.add(r.id);
+            state.campaignRollLogs.push(r);
+            addedLog = true;
+          }
+        });
+        if (addedLog) {
+          state.campaignRollLogs.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+          state.campaignRollLogs = state.campaignRollLogs.slice(0, 80);
+          changed = true;
+        }
+      }
+
+      // 4. Злиття плейлиста та стану аудіо Майстра
+      if (Array.isArray(payload.audioTracks)) {
+        const localIds = new Set(state.audioTracks.map(t => t.id));
+        payload.audioTracks.forEach(tr => {
+          if (tr && tr.id && !tr.isLocalBlob && !localIds.has(tr.id)) {
+            state.audioTracks.push(tr);
+            changed = true;
+          }
+        });
+      }
+
+      if (payload.audioState && typeof payload.audioState === 'object') {
+        const incAudioTime = Number(payload.audioState.updatedAt) || 0;
+        const locAudioTime = Number(state.audioState.updatedAt) || 0;
+        if (incAudioTime > locAudioTime) {
+          const prevVol = state.audioState.volume;
+          state.audioState = {
+            ...payload.audioState,
+            volume: prevVol
+          };
+          syncAudioFromState();
+          changed = true;
+        }
+      }
+
+      // Якщо Майстер увійшов на порожньому ноутбуці і щойно прийшли персонажі — обираємо першого
+      if (state.session.loggedIn && state.session.role === 'gm' && !state.session.activeCharId) {
+        const list = Object.values(state.characters).filter(c =>
+          state.session.gmCategory === 'npcs' ? c.isNpc : !c.isNpc
+        );
+        if (list.length > 0) {
+          state.session.activeCharId = list[0].id;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        state.cloud.lastSyncTime = new Date().toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        saveDatabase(false);
+        safeRenderApp();
+      }
+      return changed;
+    }
+
+    // Формування пакету для відправки в хмару
+    function buildCloudPayload() {
+      return {
+        senderId: CLIENT_ID,
+        sentAt: Date.now(),
+        roomCode: state.roomCode,
+        characters: state.characters,
+        deletedChars: state.deletedChars,
+        campaignRollLogs: state.campaignRollLogs,
+        audioTracks: state.audioTracks.filter(t => !t.isLocalBlob),
+        audioState: state.audioState
+      };
+    }
+
+    function getRoomTopics() {
+      const cleanRoom = (state.roomCode || DEFAULT_ROOM_CODE).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+      return {
+        stateTopic: `vitruvium_entropia_v9/${cleanRoom}/state`,
+        pingTopic:  `vitruvium_entropia_v9/${cleanRoom}/ping`
+      };
+    }
+
+    // Відправка даних через MQTT (Retained) + Firebase Realtime DB (якщо вказано)
+    function publishStateToCloud() {
+      const payload = buildCloudPayload();
+      const jsonStr = JSON.stringify(payload);
+
+      // 1. Відправка через MQTT з прапорцем retain: true (щоб нові пристрої одразу завантажували стан)
+      if (mqttClient && mqttClient.connected) {
+        const { stateTopic } = getRoomTopics();
+        mqttClient.publish(stateTopic, jsonStr, { qos: 1, retain: true });
+        state.cloud.lastSyncTime = new Date().toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+
+      // 2. Якщо підключено Firebase Realtime Database URL — зберігаємо і туди
+      if (state.firebaseDbUrl) {
+        pushToFirebaseRest(payload);
+      }
+    }
+
+    // Ініціалізація хмарного WebSocket-з'єднання
+    function initCloudConnection() {
+      if (typeof mqtt === 'undefined') {
+        state.cloud.status = 'error';
+        safeRenderApp();
+        return;
+      }
+
+      if (mqttClient) {
+        try { mqttClient.end(true); } catch (_) {}
+      }
+
+      const brokerUrl = MQTT_BROKERS[state.cloud.brokerIndex % MQTT_BROKERS.length];
+      state.cloud.status = 'connecting';
+      safeRenderApp();
+
+      mqttClient = mqtt.connect(brokerUrl, {
+        clientId: 'vitruv_' + CLIENT_ID + '_' + Math.floor(Math.random() * 9999),
+        clean: true,
+        connectTimeout: 6000,
+        reconnectPeriod: 3500
+      });
+
+      mqttClient.on('connect', () => {
+        state.cloud.status = 'online';
+        const { stateTopic, pingTopic } = getRoomTopics();
+
+        mqttClient.subscribe([stateTopic, pingTopic], { qos: 1 }, (err) => {
+          if (!err) {
+            // Запитуємо свіжий стан у всіх активних пристроїв у кімнаті
+            mqttClient.publish(pingTopic, JSON.stringify({ senderId: CLIENT_ID, time: Date.now() }), { qos: 0 });
+            // Якщо на цьому пристрої вже є персонажі — публікуємо їх у спільну кімнату
+            if (Object.keys(state.characters).length > 0) {
+              setTimeout(() => publishStateToCloud(), 350);
+            }
+          }
+        });
+        safeRenderApp();
+      });
+
+      mqttClient.on('message', (topic, messageBuffer) => {
+        try {
+          const text = messageBuffer.toString();
+          if (!text) return;
+          const data = JSON.parse(text);
+          const { stateTopic, pingTopic } = getRoomTopics();
+
+          if (topic === pingTopic) {
+            // Інший пристрій (наприклад, ноутбук Майстра) щойно зайшов і просить скинути всіх персонажів
+            if (data.senderId !== CLIENT_ID && Object.keys(state.characters).length > 0) {
+              publishStateToCloud();
+            }
+            return;
+          }
+
+          if (topic === stateTopic && data) {
+            mergeRemotePayload(data);
+          }
+        } catch (err) {
+          console.warn('Помилка обробки мережевого пакету:', err);
+        }
+      });
+
+      mqttClient.on('error', () => {
+        state.cloud.brokerIndex = (state.cloud.brokerIndex + 1) % MQTT_BROKERS.length;
+      });
+
+      mqttClient.on('offline', () => {
+        state.cloud.status = 'connecting';
+        safeRenderApp();
+      });
+    }
+
+    // Підтримка прямого посилання Firebase Realtime Database (REST JSON)
+    async function pushToFirebaseRest(payload) {
+      if (!state.firebaseDbUrl) return;
+      try {
+        const cleanUrl = state.firebaseDbUrl.replace(/\/+$/, '');
+        const cleanRoom = (state.roomCode || DEFAULT_ROOM_CODE).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+        await fetch(`${cleanUrl}/vitruvium_${cleanRoom}.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (e) {
+        console.warn('Firebase REST push error:', e);
+      }
+    }
+
+    async function pullFromFirebaseRest() {
+      if (!state.firebaseDbUrl) return;
+      try {
+        const cleanUrl = state.firebaseDbUrl.replace(/\/+$/, '');
+        const cleanRoom = (state.roomCode || DEFAULT_ROOM_CODE).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+        const res = await fetch(`${cleanUrl}/vitruvium_${cleanRoom}.json`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data) mergeRemotePayload(data);
+        }
+      } catch (e) {
+        console.warn('Firebase REST pull error:', e);
+      }
+    }
+
+    function startFirebasePollingIfConfigured() {
+      if (firebasePollInterval) clearInterval(firebasePollInterval);
+      if (state.firebaseDbUrl) {
+        pullFromFirebaseRest();
+        firebasePollInterval = setInterval(pullFromFirebaseRest, 3500);
+      }
+    }
+
+    window.forceCloudSyncNow = function() {
+      if (mqttClient && mqttClient.connected) {
+        const { pingTopic } = getRoomTopics();
+        mqttClient.publish(pingTopic, JSON.stringify({ senderId: CLIENT_ID, time: Date.now() }));
+        publishStateToCloud();
+      } else {
+        initCloudConnection();
+      }
+      if (state.firebaseDbUrl) {
+        pullFromFirebaseRest();
+      }
+      safeRenderApp();
+    };
+
+    window.saveCloudSettings = function(event) {
+      if (event) event.preventDefault();
+      const roomEl = document.getElementById('cloudRoomInput');
+      const fbEl = document.getElementById('cloudFirebaseInput');
+
+      if (roomEl && roomEl.value.trim()) {
+        state.roomCode = roomEl.value.trim().toLowerCase();
+        state.loginForm.roomInput = state.roomCode;
+      }
+      if (fbEl) {
+        state.firebaseDbUrl = fbEl.value.trim();
+      }
+
+      state.cloud.cloudModalOpen = false;
+      saveDatabase(true);
+      initCloudConnection();
+      startFirebasePollingIfConfigured();
+      safeRenderApp();
+    };
 
     window.addEventListener('storage', (e) => {
       if (e.key === STORAGE_KEY) {
         loadDatabase();
         syncAudioFromState();
-        renderApp();
+        safeRenderApp();
       }
     });
 
@@ -378,8 +715,12 @@
       return state.characters[id];
     }
 
+    function touchCharacter(char) {
+      if (char) char.updatedAt = Date.now();
+    }
+
     /********************************************************************
-     * 5. ОБЧИСЛЕННЯ СТАТІВ, ШТРАФІВ ТРАВМ, ХП ТА ОСОБИСТОГО ЖУРНАЛУ
+     * 5. ОБЧИСЛЕННЯ ПУЛУ КУБИКІВ, ТРАВМ ТА ОСОБИСТОГО ЖУРНАЛУ
      ********************************************************************/
     function getWoundCount(char, statId) {
       const arr = char?.wounds?.[statId] || [];
@@ -424,7 +765,6 @@
       return stage;
     }
 
-    // ГАРАНТОВАНИЙ ОСОБИСТИЙ ЖУРНАЛ ПЕРСОНАЖА (об'єднує особистий масив + загальний лог кампанії)
     function getPersonalRollLogs(char) {
       if (!char) return [];
       const directLogs = Array.isArray(char.rollLog) ? char.rollLog : [];
@@ -452,17 +792,28 @@
     }
 
     /********************************************************************
-     * 6. ОБРОБНИКИ ВХОДУ ТА НАВІГАЦІЇ
+     * 6. ОБРОБНИКИ ВХОДУ ТА ПЕРЕМИКАННЯ ВКЛАДОК
      ********************************************************************/
     window.selectLoginRole = function(role) {
       state.loginForm.role = role;
       state.loginForm.errorMsg = '';
-      renderApp();
+      safeRenderApp();
     };
 
     window.handleLoginSubmit = function(event) {
       if (event) event.preventDefault();
       const { role } = state.loginForm;
+
+      const roomEl = document.getElementById('loginRoomInput');
+      const newRoom = (roomEl ? roomEl.value : state.loginForm.roomInput).trim().toLowerCase() || DEFAULT_ROOM_CODE;
+      const roomChanged = newRoom !== state.roomCode;
+      state.roomCode = newRoom;
+      state.loginForm.roomInput = newRoom;
+
+      if (roomChanged) {
+        initCloudConnection();
+        startFirebasePollingIfConfigured();
+      }
 
       if (role === 'gm') {
         const passEl = document.getElementById('gmPasswordInput');
@@ -470,7 +821,7 @@
 
         if (pass !== GM_SECRET_PASSWORD) {
           state.loginForm.errorMsg = 'Невірний пароль Майстра!';
-          renderApp();
+          safeRenderApp();
           return;
         }
 
@@ -483,7 +834,10 @@
         const playerChars = Object.values(state.characters).filter(c => !c.isNpc);
         state.session.activeCharId = playerChars.length > 0 ? playerChars[0].id : null;
         state.loginForm.errorMsg = '';
-        renderApp();
+
+        // Одразу опитуємо хмару, щоб підтягнути персонажів з телефонів гравців
+        window.forceCloudSyncNow();
+        safeRenderApp();
         return;
       }
 
@@ -495,14 +849,18 @@
 
       if (!rawLogin) {
         state.loginForm.errorMsg = 'Введіть ваш логін або позивний!';
-        renderApp();
+        safeRenderApp();
         return;
       }
 
       const cleanKey = rawLogin.toLowerCase().replace(/\s+/g, '_');
       const charId = `entropia_player_${cleanKey}`;
 
-      // Перевіряємо чи вже існує персонаж із цим логіном
+      // Якщо цей ID був раніше видалений, але гравець створює заново — знімаємо мітку видалення
+      if (state.deletedChars[charId]) {
+        delete state.deletedChars[charId];
+      }
+
       let existingId = state.characters[charId] ? charId : null;
       if (!existingId) {
         const found = Object.values(state.characters).find(
@@ -516,10 +874,9 @@
       if (!state.characters[finalCharId]) {
         const displayCharName = rawCharName || rawLogin;
         state.characters[finalCharId] = createBlankCharacter(finalCharId, rawLogin, displayCharName, false);
-        saveDatabase();
       } else if (rawCharName) {
         state.characters[finalCharId].name = rawCharName;
-        saveDatabase();
+        touchCharacter(state.characters[finalCharId]);
       }
 
       state.session.loggedIn = true;
@@ -528,7 +885,9 @@
       state.session.activeCharId = finalCharId;
       state.session.activeTab = 'all';
       state.loginForm.errorMsg = '';
-      renderApp();
+
+      saveDatabase(true);
+      safeRenderApp();
     };
 
     window.handleLogout = function() {
@@ -538,45 +897,42 @@
       state.loginForm.errorMsg = '';
       state.ui.skillFormOpen = false;
       state.ui.privacyPreviewOpen = false;
-      renderApp();
+      safeRenderApp();
     };
 
     window.switchMainTab = function(tabId) {
       state.session.activeTab = tabId;
-      renderApp();
+      safeRenderApp();
     };
 
     window.switchGmCategory = function(cat) {
       state.session.gmCategory = cat;
       const list = Object.values(state.characters).filter(c => cat === 'npcs' ? c.isNpc : !c.isNpc);
-      if (list.length > 0) {
-        state.session.activeCharId = list[0].id;
-      } else {
-        state.session.activeCharId = null;
-      }
-      renderApp();
+      state.session.activeCharId = list.length > 0 ? list[0].id : null;
+      safeRenderApp();
     };
 
     window.selectCharacterById = function(charId) {
       if (!state.characters[charId]) return;
       state.session.activeCharId = charId;
-      renderApp();
+      safeRenderApp();
     };
 
     window.resetAllLocalData = function() {
-      if (confirm('Очистити локальний кеш браузера? Усі збереження в цьому браузері будуть скинуті.')) {
+      if (confirm('Очистити локальний кеш цього браузера? Дані з хмари будуть завантажені заново.')) {
         localStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem('vitruvium_app_v6_stable');
         state.characters = {};
+        state.deletedChars = {};
         state.campaignRollLogs = [];
         state.session.loggedIn = false;
         state.session.activeCharId = null;
-        renderApp();
+        initCloudConnection();
+        safeRenderApp();
       }
     };
 
     /********************************************************************
-     * 7. ОПЕРАЦІЇ З ЛИСТОМ ПЕРСОНАЖА, ХП, ТРАВМАМИ, НАВИЧКАМИ ТА ГМ-ДІЯМИ
+     * 7. ДІЇ З ЛИСТОМ ПЕРСОНАЖА (УСІ ДІЇ МИТТЄВО СИНХРОНІЗУЮТЬСЯ В ХМАРУ)
      ********************************************************************/
     window.changeStat = function(statId, delta) {
       const char = getActiveCharacter();
@@ -590,16 +946,18 @@
           row.map((val, cIdx) => (cIdx < next ? val : false))
         );
       }
-      saveDatabase();
-      renderApp();
+      touchCharacter(char);
+      saveDatabase(true);
+      safeRenderApp();
     };
 
     window.toggleWoundCell = function(statId, cellIndex) {
       const char = getActiveCharacter();
       if (!char) return;
       char.wounds[statId][cellIndex] = !char.wounds[statId][cellIndex];
-      saveDatabase();
-      renderApp();
+      touchCharacter(char);
+      saveDatabase(true);
+      safeRenderApp();
     };
 
     window.toggleHpCircle = function(rowIndex, colIndex) {
@@ -608,8 +966,9 @@
       const maxCols = Number(char.stats.health || 1);
       if (colIndex >= maxCols) return;
       char.hpGrid[rowIndex][colIndex] = !char.hpGrid[rowIndex][colIndex];
-      saveDatabase();
-      renderApp();
+      touchCharacter(char);
+      saveDatabase(true);
+      safeRenderApp();
     };
 
     window.stepHpDamage = function(addDamage = true) {
@@ -622,8 +981,9 @@
           for (let c = 0; c < maxCols; c++) {
             if (!char.hpGrid[r][c]) {
               char.hpGrid[r][c] = true;
-              saveDatabase();
-              renderApp();
+              touchCharacter(char);
+              saveDatabase(true);
+              safeRenderApp();
               return;
             }
           }
@@ -633,8 +993,9 @@
           for (let c = maxCols - 1; c >= 0; c--) {
             if (char.hpGrid[r][c]) {
               char.hpGrid[r][c] = false;
-              saveDatabase();
-              renderApp();
+              touchCharacter(char);
+              saveDatabase(true);
+              safeRenderApp();
               return;
             }
           }
@@ -646,20 +1007,26 @@
       const char = getActiveCharacter();
       if (!char) return;
       char[field] = value;
-      saveDatabase();
+      touchCharacter(char);
+      saveDatabase(false);
+      if (textSyncTimeout) clearTimeout(textSyncTimeout);
+      textSyncTimeout = setTimeout(() => {
+        publishStateToCloud();
+      }, 450);
     };
 
     window.togglePrivacyField = function(field) {
       const char = getActiveCharacter();
       if (!char) return;
       char.privacy[field] = !char.privacy[field];
-      saveDatabase();
-      renderApp();
+      touchCharacter(char);
+      saveDatabase(true);
+      safeRenderApp();
     };
 
     window.togglePrivacyPreview = function() {
       state.ui.privacyPreviewOpen = !state.ui.privacyPreviewOpen;
-      renderApp();
+      safeRenderApp();
     };
 
     // Натхнення 🌀
@@ -668,8 +1035,9 @@
       const char = state.characters[charId];
       if (!char) return;
       char.inspiration.count = Math.max(0, (char.inspiration.count || 0) + delta);
-      saveDatabase();
-      renderApp();
+      touchCharacter(char);
+      saveDatabase(true);
+      safeRenderApp();
     };
 
     window.playerRequestInspiration = function() {
@@ -681,8 +1049,9 @@
       }
       char.inspiration.pendingRequest = true;
       char.inspiration.lastStatus = 'pending';
-      saveDatabase();
-      renderApp();
+      touchCharacter(char);
+      saveDatabase(true);
+      safeRenderApp();
     };
 
     window.gmResolveInspiration = function(charId, approve) {
@@ -691,2243 +1060,4 @@
       if (!char) return;
 
       char.inspiration.pendingRequest = false;
-      if (approve && char.inspiration.count > 0) {
-        char.inspiration.count -= 1;
-        char.inspiration.lastStatus = 'approved';
-      } else {
-        char.inspiration.lastStatus = 'rejected';
-      }
-      saveDatabase();
-      renderApp();
-    };
-
-    // Створення та видалення персонажів Майстром
-    window.gmCreateCharacter = function(isNpc = false) {
-      const label = isNpc ? 'Введіть імʼя нового приватного НПС Майстра:' : 'Введіть імʼя нового персонажа гравця:';
-      const name = prompt(label);
-      if (!name || !name.trim()) return;
-      const cleanName = name.trim();
-      const id = `entropia_${isNpc ? 'npc' : 'player'}_${Date.now()}`;
-      state.characters[id] = createBlankCharacter(id, isNpc ? 'GM_NPC' : cleanName, cleanName, isNpc);
-      state.session.gmCategory = isNpc ? 'npcs' : 'players';
-      state.session.activeCharId = id;
-      saveDatabase();
-      renderApp();
-    };
-
-    window.gmDeleteCharacter = function(charId) {
-      if (state.session.role !== 'gm') return;
-      const target = state.characters[charId];
-      if (!target) return;
-      if (!confirm(`Ви дійсно хочете видалити лист персонажа «${target.name}»? Цю дію неможливо скасувати.`)) {
-        return;
-      }
-      delete state.characters[charId];
-      const remaining = Object.values(state.characters).filter(c =>
-        state.session.gmCategory === 'npcs' ? c.isNpc : !c.isNpc
-      );
-      state.session.activeCharId = remaining.length > 0 ? remaining[0].id : null;
-      saveDatabase();
-      renderApp();
-    };
-
-    // Навички
-    window.toggleSkillForm = function() {
-      state.ui.skillFormOpen = !state.ui.skillFormOpen;
-      renderApp();
-    };
-
-    window.setNewSkillEffectType = function(type) {
-      state.ui.newSkillEffectType = type;
-      renderApp();
-    };
-
-    window.addSkillFromForm = function(event) {
-      if (event) event.preventDefault();
-      const char = getActiveCharacter();
-      if (!char) return;
-
-      const name = document.getElementById('skName')?.value?.trim();
-      const effectType = state.ui.newSkillEffectType || 'active';
-      const statId = document.getElementById('skStat')?.value || 'any';
-      const rawDiceMod = parseInt(document.getElementById('skDiceMod')?.value || '0', 10);
-      const rawFlatBonus = parseInt(document.getElementById('skFlatBonus')?.value || '0', 10);
-      const condition = document.getElementById('skCondition')?.value?.trim() || '';
-      const description = document.getElementById('skDesc')?.value?.trim() || '';
-      const isHidden = !!document.getElementById('skHidden')?.checked;
-
-      if (!name) {
-        alert('Введіть назву навички!');
-        return;
-      }
-
-      const diceMod = effectType === 'none' ? 0 : (Number.isFinite(rawDiceMod) ? rawDiceMod : 0);
-      const flatBonus = effectType === 'none' ? 0 : (Number.isFinite(rawFlatBonus) ? rawFlatBonus : 0);
-
-      char.skills.push({
-        id: 'sk_' + Date.now(),
-        name,
-        effectType,
-        statId: effectType === 'none' ? 'any' : statId,
-        diceMod,
-        flatBonus,
-        condition,
-        description,
-        active: effectType === 'passive' ? true : (effectType === 'active'),
-        hidden: isHidden
-      });
-
-      state.ui.skillFormOpen = false;
-      saveDatabase();
-      renderApp();
-    };
-
-    window.toggleSkillActive = function(skillId) {
-      const char = getActiveCharacter();
-      if (!char) return;
-      const sk = char.skills.find(s => s.id === skillId);
-      if (sk && sk.effectType === 'active') {
-        sk.active = !sk.active;
-        saveDatabase();
-        renderApp();
-      }
-    };
-
-    window.toggleSkillHidden = function(skillId) {
-      const char = getActiveCharacter();
-      if (!char) return;
-      const sk = char.skills.find(s => s.id === skillId);
-      if (sk) {
-        sk.hidden = !sk.hidden;
-        saveDatabase();
-        renderApp();
-      }
-    };
-
-    window.deleteSkill = function(skillId) {
-      const char = getActiveCharacter();
-      if (!char) return;
-      char.skills = char.skills.filter(s => s.id !== skillId);
-      saveDatabase();
-      renderApp();
-    };
-
-    /********************************************************************
-     * 8. СТІЛ КИДКІВ КУБИКІВ ТА ЖУРНАЛ
-     ********************************************************************/
-    window.selectDiceStat = function(statId) {
-      state.diceRoller.selectedStat = statId;
-      renderApp();
-    };
-
-    window.changeExtraDiceMod = function(delta) {
-      const cur = Number(state.diceRoller.extraDiceMod || 0);
-      state.diceRoller.extraDiceMod = Math.min(5, Math.max(-5, cur + delta));
-      renderApp();
-    };
-
-    window.rollVitruviumDice = function(statIdOverride) {
-      const char = getActiveCharacter();
-      if (!char || state.diceRoller.isRolling) return;
-
-      const statId = statIdOverride || state.diceRoller.selectedStat || 'health';
-      state.diceRoller.selectedStat = statId;
-
-      const statObj = STATS.find(s => s.id === statId) || STATS[0];
-      const diceCount = getDicePoolForStat(char, statId, true);
-      const { diceMod, flatBonus, activeSkills } = getActiveSkillModifiers(char, statId);
-      const extraMod = Number(state.diceRoller.extraDiceMod || 0);
-      const penalty = getWoundPenalty(char, statId);
-
-      state.diceRoller.isRolling = true;
-      state.diceRoller.rollingCount = diceCount;
-      renderApp();
-
-      setTimeout(() => {
-        const faces = [
-          { points: 2, mode: 'full' },
-          { points: 1, mode: 'half' },
-          { points: 1, mode: 'half' },
-          { points: 0, mode: 'empty' },
-          { points: 0, mode: 'empty' },
-          { points: 0, mode: 'empty' }
-        ];
-
-        const results = [];
-        let diceSum = 0;
-        let countTwo = 0;
-        let countOne = 0;
-        let countZero = 0;
-
-        for (let i = 0; i < diceCount; i++) {
-          const pick = faces[Math.floor(Math.random() * faces.length)];
-          results.push(pick);
-          diceSum += pick.points;
-          if (pick.points === 2) countTwo++;
-          else if (pick.points === 1) countOne++;
-          else countZero++;
-        }
-
-        const totalScore = diceSum + flatBonus;
-        const rollRecord = {
-          id: 'roll_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-          charId: char.id,
-          charName: char.name,
-          charOwner: char.owner,
-          time: new Date().toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          statName: statObj.name,
-          statIcon: statObj.icon,
-          baseStat: char.stats[statId],
-          penalty,
-          diceMod,
-          extraMod,
-          flatBonus,
-          diceCount,
-          results,
-          diceSum,
-          countTwo,
-          countOne,
-          countZero,
-          totalScore,
-          skillNames: activeSkills.map(s => s.name)
-        };
-
-        state.diceRoller.isRolling = false;
-        state.diceRoller.lastRoll = rollRecord;
-
-        // Зберігаємо і в особистий журнал персонажа, і в глобальний журнал кампанії
-        if (!Array.isArray(char.rollLog)) char.rollLog = [];
-        char.rollLog = [rollRecord, ...char.rollLog].slice(0, 40);
-        state.campaignRollLogs = [rollRecord, ...(state.campaignRollLogs || [])].slice(0, 80);
-
-        saveDatabase();
-        renderApp();
-      }, 400);
-    };
-
-    window.setRollLogScope = function(scope) {
-      state.ui.rollLogScope = scope;
-      renderApp();
-    };
-
-    window.clearRollLogs = function() {
-      const char = getActiveCharacter();
-      if (state.ui.rollLogScope === 'personal' && char) {
-        char.rollLog = [];
-        state.campaignRollLogs = (state.campaignRollLogs || []).filter(item => item.charId !== char.id);
-      } else if (state.session.role === 'gm') {
-        state.campaignRollLogs = [];
-        Object.values(state.characters).forEach(c => { c.rollLog = []; });
-      }
-      saveDatabase();
-      renderApp();
-    };
-
-    /********************************************************************
-     * 9. ІНТЕРАКТИВНА КАРТА ЕНТРОПІЇ ТА АУДІО-ПУЛЬТ МАЙСТРА
-     ********************************************************************/
-    window.refreshEntropiaMap = function() {
-      state.ui.mapCacheBust = Date.now();
-      renderApp();
-    };
-
-    window.setMapForceRole = function(roleMode) {
-      state.ui.mapForceRole = roleMode;
-      state.ui.mapCacheBust = Date.now();
-      renderApp();
-    };
-
-    function stopWebAudioAmbient() {
-      webAudioNodes.forEach(n => {
-        try { n.stop && n.stop(); } catch (_) {}
-        try { n.disconnect && n.disconnect(); } catch (_) {}
-      });
-      webAudioNodes = [];
-    }
-
-    function startWebAudioAmbient(preset) {
-      stopWebAudioAmbient();
-      const audioEl = document.getElementById('globalAudioElement');
-      if (audioEl) audioEl.pause();
-
-      try {
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (!webAudioCtx) webAudioCtx = new AudioContextClass();
-        if (webAudioCtx.state === 'suspended') webAudioCtx.resume();
-
-        const masterGain = webAudioCtx.createGain();
-        masterGain.gain.value = Math.max(0.05, Number(state.audioState.volume || 0.6) * 0.25);
-        masterGain.connect(webAudioCtx.destination);
-
-        const osc1 = webAudioCtx.createOscillator();
-        const osc2 = webAudioCtx.createOscillator();
-        const lfo = webAudioCtx.createOscillator();
-        const lfoGain = webAudioCtx.createGain();
-        const filter = webAudioCtx.createBiquadFilter();
-
-        osc1.type = preset.type || 'sine';
-        osc2.type = 'sine';
-        osc1.frequency.value = preset.freq1;
-        osc2.frequency.value = preset.freq2;
-
-        filter.type = 'lowpass';
-        filter.frequency.value = 420;
-
-        lfo.frequency.value = preset.lfo || 0.2;
-        lfoGain.gain.value = 180;
-
-        lfo.connect(lfoGain);
-        lfoGain.connect(filter.frequency);
-
-        osc1.connect(filter);
-        osc2.connect(filter);
-        filter.connect(masterGain);
-
-        osc1.start();
-        osc2.start();
-        lfo.start();
-
-        webAudioNodes = [osc1, osc2, lfo, lfoGain, filter, masterGain];
-      } catch (e) {
-        console.warn('Web Audio API помилка:', e);
-      }
-    }
-
-    window.playBuiltinAmbient = function(presetId) {
-      const preset = BUILTIN_AMBIENTS.find(p => p.id === presetId);
-      if (!preset) return;
-
-      state.audioState.activeTrackId = preset.id;
-      state.audioState.activeTitle = preset.title;
-      state.audioState.activeUrl = '';
-      state.audioState.mode = 'synth';
-      state.audioState.isPlaying = true;
-
-      startWebAudioAmbient(preset);
-      saveDatabase();
-      renderApp();
-    };
-
-    window.handleLocalAudioUpload = function(event) {
-      const files = event.target?.files;
-      if (!files || files.length === 0) return;
-
-      Array.from(files).forEach(file => {
-        const id = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-        const blobUrl = URL.createObjectURL(file);
-        localAudioBlobs[id] = blobUrl;
-        state.audioTracks.unshift({
-          id,
-          title: file.name.replace(/\.[^/.]+$/, ''),
-          url: blobUrl,
-          isLocalBlob: true
-        });
-      });
-
-      saveDatabase();
-      renderApp();
-    };
-
-    window.addUrlAudioTrack = function(event) {
-      if (event) event.preventDefault();
-      const title = document.getElementById('audioTitleInput')?.value?.trim();
-      const url = document.getElementById('audioUrlInput')?.value?.trim();
-      if (!title || !url) {
-        alert('Введіть назву треку та пряме посилання на аудіофайл!');
-        return;
-      }
-      state.audioTracks.unshift({
-        id: 'track_' + Date.now(),
-        title,
-        url,
-        isLocalBlob: false
-      });
-      saveDatabase();
-      renderApp();
-    };
-
-    window.playUploadedTrack = function(trackId) {
-      const tr = state.audioTracks.find(t => t.id === trackId);
-      if (!tr) return;
-
-      stopWebAudioAmbient();
-      const audioEl = document.getElementById('globalAudioElement');
-      const playUrl = localAudioBlobs[tr.id] || tr.url;
-
-      state.audioState.activeTrackId = tr.id;
-      state.audioState.activeTitle = tr.title;
-      state.audioState.activeUrl = tr.isLocalBlob ? '' : tr.url;
-      state.audioState.mode = tr.isLocalBlob ? 'file' : 'url';
-      state.audioState.isPlaying = true;
-
-      if (audioEl && playUrl) {
-        audioEl.src = playUrl;
-        audioEl.loop = true;
-        audioEl.volume = Number(state.audioState.volume || 0.6);
-        audioEl.play().catch(() => {});
-      }
-
-      saveDatabase();
-      renderApp();
-    };
-
-    window.stopAllAudio = function() {
-      stopWebAudioAmbient();
-      const audioEl = document.getElementById('globalAudioElement');
-      if (audioEl) audioEl.pause();
-      state.audioState.isPlaying = false;
-      saveDatabase();
-      renderApp();
-    };
-
-    window.changeAudioVolume = function(val) {
-      const v = Math.min(1, Math.max(0, Number(val)));
-      state.audioState.volume = v;
-      const audioEl = document.getElementById('globalAudioElement');
-      if (audioEl) audioEl.volume = v;
-      if (state.audioState.isPlaying && state.audioState.mode === 'synth') {
-        const preset = BUILTIN_AMBIENTS.find(p => p.id === state.audioState.activeTrackId);
-        if (preset) startWebAudioAmbient(preset);
-      }
-    };
-
-    window.deleteAudioTrack = function(trackId) {
-      state.audioTracks = state.audioTracks.filter(t => t.id !== trackId);
-      if (state.audioState.activeTrackId === trackId) {
-        window.stopAllAudio();
-      }
-      saveDatabase();
-      renderApp();
-    };
-
-    function syncAudioFromState() {
-      if (!state.audioState.isPlaying) {
-        stopWebAudioAmbient();
-        const audioEl = document.getElementById('globalAudioElement');
-        if (audioEl) audioEl.pause();
-        return;
-      }
-      if (state.audioState.mode === 'synth') {
-        const preset = BUILTIN_AMBIENTS.find(p => p.id === state.audioState.activeTrackId);
-        if (preset) startWebAudioAmbient(preset);
-      } else if (state.audioState.mode === 'url' && state.audioState.activeUrl) {
-        const audioEl = document.getElementById('globalAudioElement');
-        if (audioEl && audioEl.src !== state.audioState.activeUrl) {
-          audioEl.src = state.audioState.activeUrl;
-          audioEl.loop = true;
-          audioEl.volume = Number(state.audioState.volume || 0.6);
-          audioEl.play().catch(() => {});
-        }
-      }
-    }
-
-    /********************************************************************
-     * 10. РЕНДЕРИНГ ЕКРАНА ВХОДУ (ТІЛЬКИ ЕНТРОПІЯ 💠)
-     ********************************************************************/
-    function renderLoginScreen() {
-      const { role, errorMsg } = state.loginForm;
-
-      return `
-        <div class="min-h-screen flex items-center justify-center p-4 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-950/30 via-[#070b12] to-black">
-          <div class="w-full max-w-lg bg-slate-900/95 border border-cyan-500/30 rounded-2xl shadow-[0_0_50px_rgba(6,182,212,0.12)] p-6 md:p-8 backdrop-blur-md">
-
-            <!-- Логотип Ентропії -->
-            <div class="text-center mb-6">
-              <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-950 border border-cyan-500/40 shadow-[0_0_20px_rgba(34,211,238,0.25)] mb-3">
-                ${getEntropiaSymbolHTML('full', 'w-10 h-10')}
-              </div>
-              <h1 class="text-2xl md:text-3xl font-black tracking-wider uppercase text-white">
-                ВІТРУВІЙ • <span class="text-cyan-400">ЕНТРОПІЯ</span>
-              </h1>
-              <p class="text-xs text-slate-400 mt-1">
-                Інтерактивний лист персонажа, стіл кубиків, карта та аудіо-система
-              </p>
-            </div>
-
-            <!-- Вибір ролі -->
-            <div class="mb-6">
-              <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                Оберіть режим входу:
-              </label>
-              <div class="grid grid-cols-2 gap-2 p-1.5 bg-slate-950 rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  onclick="selectLoginRole('player')"
-                  class="py-2.5 px-4 rounded-lg font-extrabold text-xs uppercase tracking-wider transition-all ${
-                    role === 'player'
-                      ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.3)]'
-                      : 'text-slate-400 hover:text-white'
-                  }"
-                >
-                  👤 Гравець
-                </button>
-                <button
-                  type="button"
-                  onclick="selectLoginRole('gm')"
-                  class="py-2.5 px-4 rounded-lg font-extrabold text-xs uppercase tracking-wider transition-all ${
-                    role === 'gm'
-                      ? 'bg-amber-500 text-slate-950 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
-                      : 'text-slate-400 hover:text-white'
-                  }"
-                >
-                  👑 Майстер (ГМ)
-                </button>
-              </div>
-            </div>
-
-            <!-- Форма авторизації -->
-            <form onsubmit="handleLoginSubmit(event)" class="space-y-4">
-              ${
-                role === 'player'
-                  ? `
-                  <div>
-                    <label class="block text-xs font-bold uppercase text-slate-300 mb-1.5">
-                      Ваш логін або позивний *
-                    </label>
-                    <input
-                      id="playerLoginInput"
-                      type="text"
-                      value="${esc(state.loginForm.loginInput)}"
-                      oninput="state.loginForm.loginInput = this.value"
-                      placeholder="Наприклад: сокіл або ян_степанов"
-                      class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:outline-none focus:border-cyan-400"
-                      required
-                    />
-                    <p class="text-[11px] text-slate-400 mt-1.5">
-                      За кожним логіном закріплений окремий персонаж. При першому вході створюється повністю чистий аркуш.
-                    </p>
-                  </div>
-                  <div>
-                    <label class="block text-xs font-bold uppercase text-slate-300 mb-1.5">
-                      Ім'я персонажа (для нового листа або перейменування)
-                    </label>
-                    <input
-                      id="playerCharNameInput"
-                      type="text"
-                      value="${esc(state.loginForm.charNameInput)}"
-                      oninput="state.loginForm.charNameInput = this.value"
-                      placeholder="Необов'язково, якщо персонаж уже створений..."
-                      class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-400"
-                    />
-                  </div>
-                `
-                  : `
-                  <div>
-                    <label class="block text-xs font-bold uppercase text-amber-300 mb-1.5">
-                      Секретний пароль Майстра *
-                    </label>
-                    <input
-                      id="gmPasswordInput"
-                      type="password"
-                      value="${esc(state.loginForm.gmPasswordInput)}"
-                      oninput="state.loginForm.gmPasswordInput = this.value"
-                      placeholder="Введіть пароль Майстра..."
-                      class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-amber-500/40 text-white text-sm focus:outline-none focus:border-amber-400"
-                      required
-                    />
-                  </div>
-                `
-              }
-
-              ${
-                errorMsg
-                  ? `<div class="p-3 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300 text-xs font-bold">${esc(errorMsg)}</div>`
-                  : ''
-              }
-
-              <button
-                type="submit"
-                class="w-full py-3.5 rounded-xl font-black uppercase tracking-wider text-sm transition-all ${
-                  role === 'gm'
-                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.3)]'
-                    : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_20px_rgba(34,211,238,0.3)]'
-                }"
-              >
-                ${role === 'gm' ? '👑 Увійти в панель Майстра' : '💠 Увійти в лист персонажа'}
-              </button>
-            </form>
-
-            <div class="mt-6 pt-4 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
-              <span>ЕНТРОПІЯ • Фінальна збірка v8.0</span>
-              <button
-                type="button"
-                onclick="resetAllLocalData()"
-                class="text-slate-400 hover:text-red-400 underline transition-colors"
-              >
-                🔄 Очистити кеш браузера
-              </button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    /********************************************************************
-     * 11. КАРТКА ПЕРСОНАЖА ОЧИМА ІНШИХ ГРАВЦІВ (ДЛЯ ПРЕВ'Ю ТА ВКЛАДКИ)
-     ********************************************************************/
-    function renderPublicPlayerCard(p, forceSimulateOtherView = false) {
-      const isGM = state.session.role === 'gm';
-      const isSelf = p.id === state.session.activeCharId;
-
-      const bypassPrivacy = (isGM || (isSelf && !state.ui.simulateOtherView)) && !forceSimulateOtherView;
-      const canSeeStats = bypassPrivacy || !p.privacy.hideStats;
-      const canSeeHealth = bypassPrivacy || !p.privacy.hideHealth;
-      const canSeeSkills = bypassPrivacy || !p.privacy.hideSkills;
-
-      const currentHealthStage = getCurrentHealthStageName(p);
-      const visibleSkills = (p.skills || []).filter(sk => bypassPrivacy || !sk.hidden);
-      const hiddenSkillsCount = (p.skills || []).length - visibleSkills.length;
-
-      return `
-        <div class="bg-slate-900/95 border ${isSelf ? 'border-cyan-500/50' : 'border-slate-800'} rounded-2xl p-5 flex flex-col justify-between gap-4 shadow-lg">
-          <div>
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3 mb-3">
-              <div>
-                <div class="flex items-center gap-2">
-                  <h3 class="font-extrabold text-lg text-white">${esc(p.name)}</h3>
-                  ${isSelf ? '<span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">Ваш персонаж</span>' : ''}
-                </div>
-                <p class="text-xs text-slate-400">Логін: ${esc(p.owner)} ${p.archetype ? '• ' + esc(p.archetype) : ''}</p>
-              </div>
-              <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold">
-                <span>🌀</span>
-                <span>${p.inspiration?.count || 0}</span>
-              </div>
-            </div>
-
-            <!-- Стати -->
-            <div class="mb-3">
-              <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                <span>Характеристики:</span>
-                <span class="${p.privacy.hideStats ? 'text-red-400' : 'text-emerald-400'}">
-                  ${p.privacy.hideStats ? '🔒 Приховано гравцем' : '👁️ Відкрито для всіх'}
-                </span>
-              </div>
-              ${
-                canSeeStats
-                  ? `<div class="grid grid-cols-3 gap-2">
-                      ${STATS.map(st => `
-                        <div class="bg-slate-950 border border-slate-800/90 rounded-lg p-2 flex items-center justify-between">
-                          <span class="text-xs">${st.icon} ${st.name}</span>
-                          <span class="font-black text-sm text-white">${p.stats[st.id]}</span>
-                        </div>
-                      `).join('')}
-                    </div>`
-                  : `<div class="p-3 rounded-xl bg-slate-950 border border-red-500/25 text-xs text-slate-400 flex items-center gap-2">
-                      <span>🔒</span>
-                      <span>Характеристики приховані гравцем</span>
-                    </div>`
-              }
-            </div>
-
-            <!-- Стан здоров'я -->
-            <div class="mb-3">
-              <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                <span>Стан здоров'я та поранення:</span>
-                <span class="${p.privacy.hideHealth ? 'text-red-400' : 'text-emerald-400'}">
-                  ${p.privacy.hideHealth ? '🔒 Приховано гравцем' : '👁️ Відкрито для всіх'}
-                </span>
-              </div>
-              ${
-                canSeeHealth
-                  ? `<div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-bold text-cyan-300">
-                      ❤️ Поточний стан: ${currentHealthStage}
-                    </div>`
-                  : `<div class="p-2.5 rounded-xl bg-slate-950 border border-red-500/25 text-xs text-slate-400 flex items-center gap-2">
-                      <span>🔒</span>
-                      <span>Стан здоров'я та травми приховані</span>
-                    </div>`
-              }
-            </div>
-
-            <!-- Навички -->
-            <div>
-              <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                <span>Навички персонажа:</span>
-                <span class="${p.privacy.hideSkills ? 'text-red-400' : 'text-emerald-400'}">
-                  ${p.privacy.hideSkills ? '🔒 Усі навички приховані' : (hiddenSkillsCount > 0 ? `👁️ Відкрито (${hiddenSkillsCount} сховано окремо)` : '👁️ Відкрито для всіх')}
-                </span>
-              </div>
-              ${
-                canSeeSkills
-                  ? (visibleSkills.length > 0
-                      ? `<div class="space-y-1.5">
-                          ${visibleSkills.map(sk => `
-                            <div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs">
-                              <div class="font-bold text-slate-200 flex items-center justify-between">
-                                <span>${esc(sk.name)}</span>
-                                <span class="text-cyan-400 font-mono">
-                                  ${sk.effectType === 'none' ? '📘 Без ефектів' : `${sk.diceMod >= 0 ? '+' + sk.diceMod : sk.diceMod}🎲`}
-                                </span>
-                              </div>
-                              ${sk.condition ? `<div class="text-amber-300/90 text-[11px] mt-0.5">Умова: ${esc(sk.condition)}</div>` : ''}
-                              ${sk.description ? `<div class="text-slate-400 text-[11px] mt-0.5">${esc(sk.description)}</div>` : ''}
-                            </div>
-                          `).join('')}
-                        </div>`
-                      : `<div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-500 italic">
-                          Немає відкритих для перегляду навичок
-                        </div>`)
-                  : `<div class="p-2.5 rounded-xl bg-slate-950 border border-red-500/25 text-xs text-slate-400 flex items-center gap-2">
-                      <span>🔒</span>
-                      <span>Список навичок прихований гравцем</span>
-                    </div>`
-              }
-            </div>
-          </div>
-
-          ${
-            isGM && !forceSimulateOtherView
-              ? `<div class="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                  <div class="flex items-center gap-1.5">
-                    <button onclick="selectCharacterById('${esc(p.id)}'); switchMainTab('all');" class="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold hover:bg-amber-500/30">
-                      ✏️ Відкрити лист
-                    </button>
-                    <button onclick="gmDeleteCharacter('${esc(p.id)}')" class="px-2.5 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-bold hover:bg-red-500/30" title="Видалити персонажа">
-                      🗑️
-                    </button>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <button onclick="gmModifyInspiration('${esc(p.id)}', 1)" class="px-2.5 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-xs font-bold">+1 🌀</button>
-                    <button onclick="gmModifyInspiration('${esc(p.id)}', -1)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-bold">-1 🌀</button>
-                  </div>
-                </div>`
-              : ''
-          }
-        </div>
-      `;
-    }
-
-    /********************************************************************
-     * 12. ВКЛАДКА «👥 ІНШІ ГРАВЦІ»
-     ********************************************************************/
-    function renderOtherPlayersSection() {
-      const allPlayers = Object.values(state.characters)
-        .map(c => normalizeCharacter(c))
-        .filter(c => !c.isNpc);
-
-      if (allPlayers.length === 0) {
-        return `
-          <div class="w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-6 text-center text-slate-400">
-            У кампанії «ЕНТРОПІЯ» ще немає створених персонажів гравців.
-          </div>
-        `;
-      }
-
-      return `
-        <div class="w-full space-y-4">
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 class="text-lg font-extrabold uppercase tracking-wide text-white">👥 Інші Гравці Кампанії (ЕНТРОПІЯ)</h2>
-              <p class="text-xs text-slate-400 mt-0.5">
-                Тут відображаються картки всіх гравців групи. Перемикач праворуч дозволяє перевірити, як ваша картка виглядає для інших.
-              </p>
-            </div>
-            <button
-              type="button"
-              onclick="state.ui.simulateOtherView = !state.ui.simulateOtherView; renderApp();"
-              class="px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-all ${
-                state.ui.simulateOtherView
-                  ? 'bg-amber-500/20 border-amber-400 text-amber-300'
-                  : 'bg-slate-950 border-slate-700 text-slate-300'
-              }"
-            >
-              ${state.ui.simulateOtherView ? '👀 Моя картка: Очима інших гравців' : '🔓 Моя картка: Показати все мені'}
-            </button>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            ${allPlayers.map(p => renderPublicPlayerCard(p, false)).join('')}
-          </div>
-        </div>
-      `;
-    }
-
-    /********************************************************************
-     * 13. ВКЛАДКА «🗺️ КАРТА ЕНТРОПІЇ»
-     ********************************************************************/
-    function renderMapSection() {
-      const isGM = state.session.role === 'gm';
-      const effectiveRole = isGM ? (state.ui.mapForceRole || 'gm') : 'player';
-
-      const mapUrl = effectiveRole === 'gm'
-        ? `${MAP_BASE_URL}?role=gm&mode=admin&admin=true&v=${state.ui.mapCacheBust}#admin`
-        : `${MAP_BASE_URL}?role=player&mode=player&v=${state.ui.mapCacheBust}#player`;
-
-      return `
-        <section class="w-full bg-slate-900/95 border border-slate-800 rounded-2xl p-4 md:p-5 space-y-4 shadow-xl">
-          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-            <div>
-              <div class="flex items-center gap-2">
-                <h2 class="text-base font-black uppercase tracking-wider text-white">🗺️ Інтерактивна Карта «ЕНТРОПІЯ»</h2>
-                <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                  effectiveRole === 'gm'
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                    : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                }">
-                  ${effectiveRole === 'gm' ? '👑 Режим Адміна (Майстер)' : '👤 Режим Гравця'}
-                </span>
-              </div>
-              <p class="text-xs text-slate-400 mt-0.5">
-                Синхронізовано з <code class="text-cyan-400">nazarshulik0-dotcom.github.io/entropia_map/</code>. Будь-які зміни у репозиторії карти працюють автоматично.
-              </p>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2">
-              ${
-                isGM
-                  ? `
-                  <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-                    <button
-                      type="button"
-                      onclick="setMapForceRole('gm')"
-                      class="px-2.5 py-1 rounded-lg text-xs font-bold ${
-                        effectiveRole === 'gm' ? 'bg-amber-500 text-slate-950' : 'text-slate-400'
-                      }"
-                    >
-                      👑 Адмін-карта
-                    </button>
-                    <button
-                      type="button"
-                      onclick="setMapForceRole('player')"
-                      class="px-2.5 py-1 rounded-lg text-xs font-bold ${
-                        effectiveRole === 'player' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400'
-                      }"
-                    >
-                      👁️ Вигляд Гравця
-                    </button>
-                  </div>
-                `
-                  : ''
-              }
-
-              <button
-                type="button"
-                onclick="refreshEntropiaMap()"
-                class="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200"
-                title="Оновити карту без кешу після змін на GitHub"
-              >
-                🔄 Оновити карту
-              </button>
-
-              <button
-                type="button"
-                onclick="state.ui.mapTall = !state.ui.mapTall; renderApp();"
-                class="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200"
-              >
-                ${state.ui.mapTall ? '🗗 Звичайний розмір' : '⛶ Розгорнути вище'}
-              </button>
-
-              <a
-                href="${esc(mapUrl)}"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-xs font-bold text-cyan-300"
-              >
-                ↗ У новій вкладці
-              </a>
-            </div>
-          </div>
-
-          <div class="w-full rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
-            <iframe
-              src="${esc(mapUrl)}"
-              class="w-full ${state.ui.mapTall ? 'h-[84vh]' : 'h-[68vh]'} border-0"
-              allow="fullscreen; clipboard-read; clipboard-write"
-              title="Інтерактивна Карта Ентропії"
-            ></iframe>
-          </div>
-        </section>
-      `;
-    }
-
-    /********************************************************************
-     * 14. ВКЛАДКА «🎵 ТРЕКИ МАЙСТРА» (АУДІО-ПУЛЬТ КАМПАНІЇ)
-     ********************************************************************/
-    function renderAudioSection() {
-      const isGM = state.session.role === 'gm';
-
-      return `
-        <section class="w-full bg-slate-900/95 border border-slate-800 rounded-2xl p-5 space-y-6 shadow-xl">
-          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-            <div>
-              <h2 class="text-base font-black uppercase tracking-wider text-white">🎵 Аудіо-пульт та Саундтреки «ЕНТРОПІЇ»</h2>
-              <p class="text-xs text-slate-400 mt-0.5">
-                Майстер може завантажити власні треки з комп'ютера, додати прямі URL-посилання або увімкнути вбудовані генератори атмосфери секторів.
-              </p>
-            </div>
-            ${
-              state.audioState.isPlaying
-                ? `<button onclick="stopAllAudio()" class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-400 text-slate-950 font-black text-xs">⏹ Зупинити відтворення</button>`
-                : ''
-            }
-          </div>
-
-          <!-- Вбудовані ембієнти секторів Ентропії -->
-          <div class="space-y-2.5">
-            <div class="text-xs font-extrabold uppercase tracking-wider text-cyan-400">
-              💠 Вбудовані атмосферні фони секторів (Web Audio Синтез):
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              ${BUILTIN_AMBIENTS.map(preset => {
-                const active = state.audioState.isPlaying && state.audioState.activeTrackId === preset.id;
-                return `
-                  <div class="p-3.5 rounded-xl bg-slate-950 border ${active ? 'border-cyan-400 bg-cyan-500/10' : 'border-slate-800'} flex items-center justify-between gap-2">
-                    <div class="text-xs font-bold text-slate-200">${esc(preset.title)}</div>
-                    ${
-                      isGM
-                        ? `<button
-                            type="button"
-                            onclick="${active ? 'stopAllAudio()' : `playBuiltinAmbient('${preset.id}')`}"
-                            class="px-3 py-1.5 rounded-lg text-xs font-extrabold shrink-0 ${
-                              active ? 'bg-amber-500 text-slate-950' : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                            }"
-                          >
-                            ${active ? '⏹ Стоп' : '▶ Пуск'}
-                          </button>`
-                        : `<span class="text-[11px] text-slate-500">${active ? '🔊 Грає' : 'Очікує'}</span>`
-                    }
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          </div>
-
-          ${
-            isGM
-              ? `
-              <!-- Завантаження файлів або URL (тільки для Майстра) -->
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-slate-800">
-                <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
-                  <div class="text-xs font-extrabold uppercase tracking-wider text-emerald-400">
-                    📂 1. Завантажити аудіофайли з пристрою (MP3 / WAV / OGG)
-                  </div>
-                  <p class="text-[11px] text-slate-400">
-                    Оберіть один або декілька аудіофайлів зі свого комп'ютера чи смартфона для миттєвого відтворення:
-                  </p>
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    multiple
-                    onchange="handleLocalAudioUpload(event)"
-                    class="block w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-3.5 file:rounded-lg file:border-0 file:text-xs file:font-extrabold file:bg-emerald-500 file:text-slate-950 hover:file:bg-emerald-400 cursor-pointer"
-                  />
-                </div>
-
-                <form onsubmit="addUrlAudioTrack(event)" class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
-                  <div class="text-xs font-extrabold uppercase tracking-wider text-amber-400">
-                    🔗 2. Додати трек за прямим посиланням (URL)
-                  </div>
-                  <input
-                    id="audioTitleInput"
-                    type="text"
-                    placeholder="Назва треку (напр.: Битва з Архангелом)"
-                    class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white"
-                    required
-                  />
-                  <div class="flex gap-2">
-                    <input
-                      id="audioUrlInput"
-                      type="url"
-                      placeholder="https://example.com/track.mp3"
-                      class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white"
-                      required
-                    />
-                    <button type="submit" class="px-4 py-2 rounded-lg bg-amber-500 text-slate-950 font-extrabold text-xs shrink-0">
-                      + Додати
-                    </button>
-                  </div>
-                </form>
-              </div>
-            `
-              : ''
-          }
-
-          <!-- Список завантажених треків -->
-          <div class="space-y-2 pt-2 border-t border-slate-800">
-            <div class="text-xs font-extrabold uppercase tracking-wider text-slate-300">
-              Плейлист Майстра (${state.audioTracks.length}):
-            </div>
-            ${
-              state.audioTracks.length === 0
-                ? `<div class="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-500 italic">
-                    Ще немає доданих користувацьких треків. Завантажте файл або використайте вбудовані теми секторів вище.
-                  </div>`
-                : `<div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                    ${state.audioTracks.map(tr => {
-                      const active = state.audioState.isPlaying && state.audioState.activeTrackId === tr.id;
-                      return `
-                        <div class="p-3 rounded-xl bg-slate-950 border ${active ? 'border-emerald-400' : 'border-slate-800'} flex items-center justify-between gap-2">
-                          <div>
-                            <div class="text-xs font-bold text-white">${esc(tr.title)}</div>
-                            <div class="text-[10px] text-slate-500">${tr.isLocalBlob ? 'Локальний файл сесії' : 'Зовнішній URL'}</div>
-                          </div>
-                          <div class="flex items-center gap-1.5">
-                            ${
-                              isGM
-                                ? `
-                                <button
-                                  type="button"
-                                  onclick="${active ? 'stopAllAudio()' : `playUploadedTrack('${esc(tr.id)}')`}"
-                                  class="px-3 py-1.5 rounded-lg text-xs font-extrabold ${
-                                    active ? 'bg-amber-500 text-slate-950' : 'bg-emerald-500 text-slate-950'
-                                  }"
-                                >
-                                  ${active ? '⏹ Стоп' : '▶ Грати'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onclick="deleteAudioTrack('${esc(tr.id)}')"
-                                  class="px-2.5 py-1.5 rounded-lg bg-red-500/20 text-red-300 text-xs font-bold"
-                                >
-                                  🗑️
-                                </button>
-                              `
-                                : `<span class="text-xs text-emerald-400 font-bold">${active ? '🔊 В ефірі' : ''}</span>`
-                            }
-                          </div>
-                        </div>
-                      `;
-                    }).join('')}
-                  </div>`
-            }
-          </div>
-        </section>
-      `;
-    }
-
-    /********************************************************************
-     * 15. ГОЛОВНИЙ ЕКРАН ПІСЛЯ ВХОДУ
-     ********************************************************************/
-    function renderMainSheet() {
-      const isGM = state.session.role === 'gm';
-      const char = getActiveCharacter();
-
-      const gmPlayersList = Object.values(state.characters).filter(c => !c.isNpc);
-      const gmNpcsList = Object.values(state.characters).filter(c => c.isNpc);
-      const pendingInspirationChars = gmPlayersList.filter(c => c.inspiration?.pendingRequest);
-
-      const navTabs = [
-        { id: 'all',       label: '📋 Повний Лист' },
-        { id: 'skills',    label: '🃏 Картки Навичок' },
-        { id: 'inventory', label: '🎒 Спорядження та Досьє' },
-        { id: 'others',    label: '👥 Інші Гравці' },
-        { id: 'log',       label: '📜 Журнал Кидків' },
-        { id: 'map',       label: '🗺️ Карта Ентропії' }
-      ];
-      if (isGM) {
-        navTabs.push({ id: 'audio', label: '🎵 Треки Майстра' });
-      }
-
-      return `
-        <header class="sticky top-0 z-30 bg-slate-950/95 border-b border-slate-800 backdrop-blur-md">
-          <div class="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
-            <!-- Назва та статус -->
-            <div class="flex items-center gap-3">
-              <div class="p-1.5 rounded-xl bg-slate-900 border border-cyan-500/40">
-                ${getEntropiaSymbolHTML('full', 'w-7 h-7')}
-              </div>
-              <div>
-                <div class="flex items-center gap-2">
-                  <span class="font-black tracking-wider text-sm md:text-base text-white">ВІТРУВІЙ • ЕНТРОПІЯ</span>
-                  <span class="text-[10px] px-2.5 py-0.5 rounded-full font-extrabold border ${
-                    isGM
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                      : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                  }">
-                    ${isGM ? '👑 МАЙСТЕР (ГМ)' : '👤 ГРАВЕЦЬ'}
-                  </span>
-                </div>
-                <div class="text-[11px] text-slate-400">Профіль: <b class="text-slate-200">${esc(state.session.loginName)}</b></div>
-              </div>
-            </div>
-
-            <!-- Міні-плеєр ефіру у верхній панелі + Кнопка виходу -->
-            <div class="flex flex-wrap items-center gap-3">
-              <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-                <span>${state.audioState.isPlaying ? '🔊' : '🔈'}</span>
-                <span class="max-w-[160px] truncate text-[11px] font-bold ${state.audioState.isPlaying ? 'text-cyan-300' : 'text-slate-500'}">
-                  ${state.audioState.isPlaying ? esc(state.audioState.activeTitle || 'Ефір активний') : 'Аудіо вимкнено'}
-                </span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value="${state.audioState.volume}"
-                  oninput="changeAudioVolume(this.value)"
-                  class="w-16 accent-cyan-400 cursor-pointer"
-                  title="Гучність"
-                />
-              </div>
-
-              <button
-                type="button"
-                onclick="handleLogout()"
-                class="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 transition-colors"
-              >
-                🚪 Вийти
-              </button>
-            </div>
-          </div>
-
-          <!-- ПАНЕЛЬ МАЙСТРА (ПЕРЕМИКАННЯ ТА ВИДАЛЕННЯ ПЕРСОНАЖІВ) -->
-          ${
-            isGM
-              ? `
-              <div class="bg-slate-900/95 border-t border-slate-800 px-4 py-2.5">
-                <div class="max-w-7xl mx-auto space-y-2">
-                  ${
-                    pendingInspirationChars.length > 0
-                      ? `<div class="space-y-1.5">
-                          ${pendingInspirationChars.map(pc => `
-                            <div class="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-indigo-500/20 border border-indigo-400/50 text-xs">
-                              <div class="font-bold text-indigo-200">
-                                🌀 Гравець «${esc(pc.name)}» просить використати Натхнення! (Залишок: ${pc.inspiration.count} 🌀)
-                              </div>
-                              <div class="flex items-center gap-2">
-                                <button onclick="gmResolveInspiration('${esc(pc.id)}', true)" class="px-3 py-1 rounded-lg bg-emerald-500 text-slate-950 font-extrabold">✅ Прийняти (-1 🌀)</button>
-                                <button onclick="gmResolveInspiration('${esc(pc.id)}', false)" class="px-3 py-1 rounded-lg bg-red-500/30 border border-red-400 text-red-200 font-bold">❌ Відхилити</button>
-                              </div>
-                            </div>
-                          `).join('')}
-                        </div>`
-                      : ''
-                  }
-
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    <div class="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onclick="switchGmCategory('players')"
-                        class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                          state.session.gmCategory === 'players'
-                            ? 'bg-amber-500 text-slate-950'
-                            : 'bg-slate-950 text-slate-400 border border-slate-800'
-                        }"
-                      >
-                        👥 Персонажі Гравців (${gmPlayersList.length})
-                      </button>
-                      <button
-                        type="button"
-                        onclick="switchGmCategory('npcs')"
-                        class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                          state.session.gmCategory === 'npcs'
-                            ? 'bg-purple-500 text-white'
-                            : 'bg-slate-950 text-slate-400 border border-slate-800'
-                        }"
-                      >
-                        🎭 Приватні НПС Майстра (${gmNpcsList.length})
-                      </button>
-                    </div>
-
-                    <div class="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onclick="gmCreateCharacter(false)"
-                        class="px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold hover:bg-emerald-500/30"
-                      >
-                        + Додати Гравця
-                      </button>
-                      <button
-                        type="button"
-                        onclick="gmCreateCharacter(true)"
-                        class="px-3 py-1.5 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold hover:bg-purple-500/30"
-                      >
-                        + Додати Приватного НПС
-                      </button>
-                      ${
-                        char
-                          ? `<button
-                              type="button"
-                              onclick="gmDeleteCharacter('${esc(char.id)}')"
-                              class="px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold hover:bg-red-500/30"
-                            >
-                              🗑️ Видалити «${esc(char.name)}»
-                            </button>`
-                          : ''
-                      }
-                    </div>
-                  </div>
-
-                  <!-- Список кнопок персонажів -->
-                  <div class="flex items-center gap-2 overflow-x-auto pb-1">
-                    ${
-                      (state.session.gmCategory === 'players' ? gmPlayersList : gmNpcsList).map(item => `
-                        <div class="inline-flex items-center rounded-xl border ${
-                          state.session.activeCharId === item.id
-                            ? 'bg-white text-slate-950 border-white shadow'
-                            : 'bg-slate-950 text-slate-300 border-slate-800'
-                        }">
-                          <button
-                            type="button"
-                            onclick="selectCharacterById('${esc(item.id)}')"
-                            class="px-3 py-1.5 text-xs font-bold whitespace-nowrap flex items-center gap-1.5"
-                          >
-                            <span>${item.isNpc ? '🎭' : '👤'} ${esc(item.name)}</span>
-                            ${item.inspiration?.pendingRequest ? '<span class="px-1.5 py-0.5 rounded bg-indigo-500 text-white text-[10px] animate-pulse">🌀!</span>' : ''}
-                          </button>
-                          <button
-                            type="button"
-                            onclick="gmDeleteCharacter('${esc(item.id)}')"
-                            class="pr-2.5 pl-1 py-1.5 text-xs opacity-60 hover:opacity-100 hover:text-red-500 font-black"
-                            title="Видалити персонажа"
-                          >✕</button>
-                        </div>
-                      `).join('') || `<span class="text-xs text-slate-500 italic">Список порожній. Створіть персонажа кнопкою праворуч.</span>`
-                    }
-                  </div>
-                </div>
-              </div>
-            `
-              : ''
-          }
-
-          <!-- ГОЛОВНІ ВКЛАДКИ НАВІГАЦІЇ -->
-          <div class="bg-slate-950 border-t border-slate-800/80 px-4 py-2">
-            <div class="max-w-7xl mx-auto flex flex-wrap items-center gap-2">
-              ${navTabs.map(tab => `
-                <button
-                  type="button"
-                  onclick="switchMainTab('${tab.id}')"
-                  class="px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all ${
-                    state.session.activeTab === tab.id
-                      ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.3)]'
-                      : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
-                  }"
-                >
-                  ${tab.label}
-                </button>
-              `).join('')}
-            </div>
-          </div>
-        </header>
-
-        <main class="max-w-7xl w-full mx-auto px-4 py-6 space-y-6 flex-1">
-          ${
-            state.session.activeTab === 'others'
-              ? renderOtherPlayersSection()
-              : state.session.activeTab === 'map'
-              ? renderMapSection()
-              : state.session.activeTab === 'audio'
-              ? renderAudioSection()
-              : (!char
-                  ? `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-3">
-                      <p class="text-slate-300 font-bold">Персонажа ще не обрано або не створено.</p>
-                      ${isGM ? `<button onclick="gmCreateCharacter(false)" class="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-black text-xs">+ Створити Персонажа</button>` : ''}
-                    </div>`
-                  : renderCharacterContent(char))
-          }
-        </main>
-      `;
-    }
-
-    /********************************************************************
-     * 16. РЕНДЕРИНГ ВМІСТУ ЛИСТА ПЕРСОНАЖА
-     ********************************************************************/
-    function renderCharacterContent(char) {
-      const isGM = state.session.role === 'gm';
-      const tab = state.session.activeTab;
-
-      const headerHTML = `
-        <section class="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
-          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-            <!-- Ім'я та Спеціалізація -->
-            <div class="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ім'я персонажа / Позивний</label>
-                <input
-                  type="text"
-                  value="${esc(char.name)}"
-                  oninput="updateTextField('name', this.value)"
-                  class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-extrabold text-base focus:outline-none focus:border-cyan-400"
-                />
-              </div>
-              <div>
-                <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Роль / Спеціалізація</label>
-                <input
-                  type="text"
-                  value="${esc(char.archetype)}"
-                  oninput="updateTextField('archetype', this.value)"
-                  placeholder="Напр.: Снайпер-розвідник"
-                  class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-sm focus:outline-none focus:border-cyan-400"
-                />
-              </div>
-            </div>
-
-            <!-- Блок Натхнення (🌀) -->
-            <div class="lg:col-span-4 bg-slate-950/90 border border-indigo-500/30 rounded-xl p-3 flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onclick="playerRequestInspiration()"
-                  class="w-11 h-11 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-2xl hover:scale-105 transition-transform"
-                  title="Натисніть, щоб запросити використання Натхнення у Майстра"
-                >
-                  🌀
-                </button>
-                <div>
-                  <div class="text-xs font-extrabold uppercase tracking-wider text-indigo-300">
-                    Натхнення: <span class="text-white text-base">${char.inspiration.count}</span>
-                  </div>
-                  <div class="text-[11px] text-slate-400">
-                    ${
-                      char.inspiration.pendingRequest
-                        ? '<span class="text-amber-300 font-bold animate-pulse">⏳ Очікує рішення Майстра...</span>'
-                        : char.inspiration.lastStatus === 'approved'
-                        ? '<span class="text-emerald-400 font-bold">✅ Майстер схвалив Натхнення!</span>'
-                        : char.inspiration.lastStatus === 'rejected'
-                        ? '<span class="text-red-400 font-bold">❌ Майстер відхилив запит</span>'
-                        : 'Натисніть 🌀 для запиту Майстру'
-                    }
-                  </div>
-                </div>
-              </div>
-
-              ${
-                isGM
-                  ? `<div class="flex items-center gap-1">
-                      <button type="button" onclick="gmModifyInspiration('${esc(char.id)}', 1)" class="px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-slate-950 font-extrabold text-xs">+1</button>
-                      <button type="button" onclick="gmModifyInspiration('${esc(char.id)}', -1)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs">-1</button>
-                    </div>`
-                  : `<button
-                      type="button"
-                      onclick="playerRequestInspiration()"
-                      ${char.inspiration.count <= 0 || char.inspiration.pendingRequest ? 'disabled' : ''}
-                      class="px-3 py-1.5 rounded-lg bg-indigo-500/25 hover:bg-indigo-500/40 disabled:opacity-40 border border-indigo-400/40 text-indigo-200 text-xs font-bold whitespace-nowrap"
-                    >
-                      Використати 🌀
-                    </button>`
-              }
-            </div>
-
-            <!-- Блок Приватності + Кнопка Попереднього Перегляду -->
-            <div class="lg:col-span-4 bg-slate-950/90 border border-slate-800 rounded-xl p-3 space-y-2">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Приватність для інших гравців:
-                </span>
-                <button
-                  type="button"
-                  onclick="togglePrivacyPreview()"
-                  class="px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition-all ${
-                    state.ui.privacyPreviewOpen
-                      ? 'bg-amber-500 text-slate-950 border-amber-400'
-                      : 'bg-slate-900 hover:bg-slate-800 text-amber-300 border-amber-500/30'
-                  }"
-                >
-                  ${state.ui.privacyPreviewOpen ? '✕ Закрити перегляд' : '👀 Як бачать інші?'}
-                </button>
-              </div>
-
-              <div class="grid grid-cols-3 gap-1.5">
-                <button
-                  type="button"
-                  onclick="togglePrivacyField('hideStats')"
-                  class="px-2 py-1.5 rounded-lg text-[11px] font-bold border transition-all text-center ${
-                    char.privacy.hideStats
-                      ? 'bg-red-500/20 border-red-500/40 text-red-300'
-                      : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  }"
-                >
-                  ${char.privacy.hideStats ? '🔒 Стати: Сховані' : '👁️ Стати: Видимі'}
-                </button>
-                <button
-                  type="button"
-                  onclick="togglePrivacyField('hideHealth')"
-                  class="px-2 py-1.5 rounded-lg text-[11px] font-bold border transition-all text-center ${
-                    char.privacy.hideHealth
-                      ? 'bg-red-500/20 border-red-500/40 text-red-300'
-                      : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  }"
-                >
-                  ${char.privacy.hideHealth ? '🔒 ХП: Сховане' : '👁️ ХП: Видиме'}
-                </button>
-                <button
-                  type="button"
-                  onclick="togglePrivacyField('hideSkills')"
-                  class="px-2 py-1.5 rounded-lg text-[11px] font-bold border transition-all text-center ${
-                    char.privacy.hideSkills
-                      ? 'bg-red-500/20 border-red-500/40 text-red-300'
-                      : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  }"
-                >
-                  ${char.privacy.hideSkills ? '🔒 Навички: Сховані' : '👁️ Навички: Видимі'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          ${
-            state.ui.privacyPreviewOpen
-              ? `
-              <div class="p-4 rounded-2xl bg-slate-950 border-2 border-amber-500/40 space-y-3">
-                <div class="text-xs font-black uppercase tracking-wider text-amber-300">
-                  👀 Попередній перегляд: ось так вашу картку зараз бачать інші гравці
-                </div>
-                <div class="max-w-xl">
-                  ${renderPublicPlayerCard(char, true)}
-                </div>
-              </div>
-            `
-              : ''
-          }
-        </section>
-      `;
-
-      const mainStatsAndWoundsHTML = `
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
-          <div class="lg:col-span-5 space-y-6">
-            <!-- 6 Базових Характеристик -->
-            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5">
-              <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-                <h2 class="text-sm font-black uppercase tracking-wider text-white">⚡ Характеристики (Макс. 6)</h2>
-                <span class="text-[11px] px-2.5 py-0.5 rounded-full font-bold border ${
-                  char.privacy.hideStats
-                    ? 'bg-red-500/15 border-red-500/30 text-red-300'
-                    : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                }">
-                  ${char.privacy.hideStats ? '🔒 Приховано від інших' : '👁️ Видимо іншим'}
-                </span>
-              </div>
-
-              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                ${STATS.map(st => {
-                  const val = char.stats[st.id];
-                  const penalty = getWoundPenalty(char, st.id);
-                  const pool = getDicePoolForStat(char, st.id, false);
-                  const isSelected = state.diceRoller.selectedStat === st.id;
-
-                  return `
-                    <div
-                      onclick="selectDiceStat('${st.id}')"
-                      class="cursor-pointer rounded-xl p-3 border transition-all flex flex-col justify-between ${
-                        isSelected
-                          ? 'bg-cyan-500/15 border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
-                          : 'bg-slate-950/90 border-slate-800 hover:border-slate-700'
-                      }"
-                    >
-                      <div class="flex items-center justify-between">
-                        <span class="text-2xl">${st.icon}</span>
-                        <span class="text-[11px] font-bold px-2 py-0.5 rounded bg-slate-900 text-slate-300">
-                          Пул: ${pool}🎲
-                        </span>
-                      </div>
-
-                      <div class="my-2">
-                        <div class="text-xs font-bold text-slate-300">${st.name}</div>${penalty > 0 ? `<div class="text-[10px] text-red-400 font-semibold">Травма: -${penalty} куб.</div>` : '<div class="text-[10px] text-slate-500">Без штрафу</div>'}
-                      </div>
-
-                      <div class="flex items-center justify-between bg-slate-900 rounded-lg p-1 border border-slate-800" onclick="event.stopPropagation()">
-                        <button
-                          type="button"
-                          onclick="changeStat('${st.id}', -1)"
-                          ${val <= 1 ? 'disabled' : ''}
-                          class="w-7 h-7 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white font-black text-sm"
-                        >−</button>
-                        <span class="font-black text-lg text-white">${val}</span>
-                        <button
-                          type="button"
-                          onclick="changeStat('${st.id}', 1)"
-                          ${val >= 6 ? 'disabled' : ''}
-                          class="w-7 h-7 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white font-black text-sm"
-                        >+</button>
-                      </div>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            </div>
-
-            <!-- Стіл кидків кубиків -->
-            ${renderDiceRollerBox(char)}
-          </div>
-
-          <div class="lg:col-span-7 space-y-6">
-            ${renderWoundsAndHpBox(char)}
-          </div>
-        </div>
-      `;
-
-      const skillsSectionHTML = renderSkillsBox(char);
-      const inventorySectionHTML = renderInventoryBox(char);
-      const logSectionHTML = renderRollLogBox(char);
-
-      if (tab === 'skills') return headerHTML + skillsSectionHTML;
-      if (tab === 'inventory') return headerHTML + inventorySectionHTML;
-      if (tab === 'log') return headerHTML + logSectionHTML;
-
-      return `
-        ${headerHTML}
-        ${mainStatsAndWoundsHTML}
-        ${skillsSectionHTML}
-        ${inventorySectionHTML}
-        ${logSectionHTML}
-      `;
-    }
-
-    /********************************************************************
-     * 17. СТІЛ КИДКІВ КУБИКІВ «ВІТРУВІЯ» (💠)
-     ********************************************************************/
-    function renderDiceRollerBox(char) {
-      const selId = state.diceRoller.selectedStat || 'health';
-      const selStat = STATS.find(s => s.id === selId) || STATS[0];
-      const baseVal = char.stats[selId];
-      const penalty = getWoundPenalty(char, selId);
-      const { diceMod, flatBonus } = getActiveSkillModifiers(char, selId);
-      const extraMod = Number(state.diceRoller.extraDiceMod || 0);
-      const pool = getDicePoolForStat(char, selId, true);
-      const isRolling = state.diceRoller.isRolling;
-      const lastRoll = state.diceRoller.lastRoll;
-
-      const relevantSkills = (char.skills || []).filter(sk =>
-        sk.effectType !== 'none' && (sk.statId === selId || sk.statId === 'any')
-      );
-
-      return `
-        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div>
-              <h2 class="text-sm font-black uppercase tracking-wider text-white">🎲 Стіл Кидків Кубиків «Вітрувія»</h2>
-              <p class="text-xs text-slate-400">Оберіть характеристику, активуйте навички та кидайте куби</p>
-            </div>
-            <div class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-right">
-              <div class="text-[10px] uppercase font-bold text-slate-400">Підсумковий пул</div>
-              <div class="text-xl font-black text-cyan-400">${pool} 🎲</div>
-            </div>
-          </div>
-
-          <!-- 1. Вибір характеристики -->
-          <div>
-            <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">1. Перевірка характеристики:</div>
-            <div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-              ${STATS.map(st => {
-                const active = st.id === selId;
-                const stPool = getDicePoolForStat(char, st.id, false);
-                return `
-                  <button
-                    type="button"
-                    onclick="selectDiceStat('${st.id}')"
-                    class="p-2 rounded-xl border text-center transition-all flex flex-col items-center gap-0.5 ${
-                      active
-                        ? 'bg-cyan-500/20 border-cyan-400 text-white shadow'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                    }"
-                  >
-                    <span class="text-lg">${st.icon}</span>
-                    <span class="text-[10px] font-bold truncate w-full">${st.name}</span>
-                    <span class="text-[10px] font-black text-slate-300">${stPool}🎲</span>
-                  </button>
-                `;
-              }).join('')}
-            </div>
-          </div>
-
-          <!-- Формула пулу + ручний модифікатор -->
-          <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
-            <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span>База <b>${selStat.icon} ${selStat.name}</b>: <b>${baseVal}</b></span>
-              <span class="${penalty > 0 ? 'text-red-400 font-bold' : 'text-slate-500'}">Травми: −${penalty}🎲</span>
-              <span class="${diceMod !== 0 ? 'text-emerald-400 font-bold' : 'text-slate-500'}">Навички: ${diceMod >= 0 ? '+' + diceMod : diceMod}🎲</span>
-              ${flatBonus !== 0 ? `<span class="text-amber-300 font-bold">Бонус балів: +${flatBonus}</span>` : ''}
-            </div>
-
-            <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-              <span class="text-slate-400 font-semibold">Ситуативний модифікатор кубів:</span>
-              <div class="flex items-center gap-1.5">
-                <button type="button" onclick="changeExtraDiceMod(-1)" class="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold">−</button>
-                <span class="w-10 text-center font-black ${extraMod > 0 ? 'text-emerald-400' : extraMod < 0 ? 'text-red-400' : 'text-slate-300'}">
-                  ${extraMod >= 0 ? '+' + extraMod : extraMod}🎲
-                </span>
-                <button type="button" onclick="changeExtraDiceMod(1)" class="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold">+</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Активні та пасивні навички для цього кидка -->
-          ${
-            relevantSkills.length > 0
-              ? `<div class="space-y-1.5">
-                  <div class="text-[11px] font-bold uppercase text-slate-400">2. Модифікатори навичок:</div>
-                  <div class="flex flex-wrap gap-1.5">
-                    ${relevantSkills.map(sk => {
-                      const isPassive = sk.effectType === 'passive';
-                      const applied = isSkillApplied(sk);
-                      return `
-                        <button
-                          type="button"
-                          onclick="${isPassive ? '' : `toggleSkillActive('${esc(sk.id)}')`}"
-                          class="px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
-                            applied
-                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
-                              : 'bg-slate-950 border-slate-800 text-slate-500'
-                          }"
-                        >
-                          ${isPassive ? '⚡ Пасивна:' : (applied ? '✓ Активна:' : '○ Умовна:')} ${esc(sk.name)} (${sk.diceMod >= 0 ? '+' + sk.diceMod : sk.diceMod}🎲)
-                        </button>
-                      `;
-                    }).join('')}
-                  </div>
-                </div>`
-              : ''
-          }
-
-          <!-- Легенда граней кубика -->
-          <div class="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-[11px]">
-            <div class="flex items-center gap-2">
-              <div class="shrink-0">${getEntropiaSymbolHTML('full', 'w-6 h-6')}</div>
-              <div>
-                <div class="font-bold text-white">2 Очки</div>
-                <div class="text-[10px] text-slate-500">1 грань із 6</div>
-              </div>
-            </div>
-            <div class="flex items-center gap-2">
-              <div class="shrink-0">${getEntropiaSymbolHTML('half', 'w-6 h-6')}</div>
-              <div>
-                <div class="font-bold text-slate-200">1 Очко</div>
-                <div class="text-[10px] text-slate-500">2 грані з 6</div>
-              </div>
-            </div>
-            <div class="flex items-center gap-2">
-              <div class="shrink-0">${getEntropiaSymbolHTML('empty', 'w-6 h-6')}</div>
-              <div>
-                <div class="font-bold text-slate-400">0 Очок</div>
-                <div class="text-[10px] text-slate-500">3 грані з 6</div>
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onclick="rollVitruviumDice('${selId}')"
-            ${isRolling ? 'disabled' : ''}
-            class="w-full py-3.5 rounded-xl font-black uppercase tracking-wider text-sm bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_20px_rgba(34,211,238,0.3)] transition-all"
-          >
-            ${isRolling ? '🎲 Кубики котяться по столу...' : `🎲 Кинути ${pool} куб. на «${selStat.name}»`}
-          </button>
-
-          <!-- Ігровий стіл результату кидка -->
-          <div class="p-4 rounded-2xl bg-slate-950 border border-slate-800 min-h-[145px] flex flex-col justify-between space-y-3">
-            ${
-              isRolling
-                ? `
-                <div class="flex flex-col items-center justify-center py-6 space-y-3">
-                  <div class="flex flex-wrap items-center justify-center gap-3">
-                    ${Array.from({ length: Math.max(1, state.diceRoller.rollingCount) }).map(() => `
-                      <div class="dice-rolling-spin w-14 h-16 rounded-xl bg-slate-900 border border-cyan-500/40 flex items-center justify-center p-2">
-                        ${getEntropiaSymbolHTML('full', 'w-8 h-8')}
-                      </div>
-                    `).join('')}
-                  </div>
-                  <div class="text-xs font-bold uppercase tracking-wider text-cyan-400 animate-pulse">
-                    Кидаємо кубики...
-                  </div>
-                </div>
-              `
-                : lastRoll
-                ? `
-                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
-                  <div>
-                    <span class="text-xs font-bold text-white">${lastRoll.statIcon}${esc(lastRoll.statName)}</span>
-                    <span class="text-[11px] text-slate-500 ml-1.5">(${esc(lastRoll.time)})</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-xs text-slate-400">Сума балів:</span>
-                    <span class="px-3 py-1 rounded-xl font-black text-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                      ${lastRoll.totalScore}
-                    </span>
-                  </div>
-                </div>
-
-                <div class="flex flex-wrap gap-2.5 py-1">
-                  ${
-                    lastRoll.results.length > 0
-                      ? lastRoll.results.map((r, idx) => `
-                          <div class="dice-land w-14 h-16 rounded-xl bg-slate-900 border-2 ${
-                            r.points === 2
-                              ? 'border-cyan-400 bg-cyan-500/10'
-                              : r.points === 1
-                              ? 'border-slate-500 bg-slate-900'
-                              : 'border-slate-800 opacity-50'
-                          } flex flex-col items-center justify-center p-1 shadow-md" style="animation-delay:${idx * 45}ms">
-                            ${getEntropiaSymbolHTML(r.mode, 'w-8 h-8')}
-                            <span class="text-[10px] font-black mt-1 ${
-                              r.points === 2 ? 'text-white' : r.points === 1 ? 'text-slate-200' : 'text-slate-500'
-                            }">+${r.points}</span>
-                          </div>
-                        `).join('')
-                      : `<div class="text-xs text-red-400 font-bold py-4">Пул кубиків дорівнює 0!</div>`
-                  }
-                </div>
-
-                <div class="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
-                  <div class="flex flex-wrap items-center gap-3">
-                    <span>Повні 💠 (2 бали): <b class="text-white">${lastRoll.countTwo ?? 0}</b></span>
-                    <span>Половинки (1 бал): <b class="text-slate-200">${lastRoll.countOne ?? 0}</b></span>
-                    <span>Пусті (0): <b class="text-slate-500">${lastRoll.countZero ?? 0}</b></span>
-                  </div>
-                  ${lastRoll.flatBonus ? `<span class="text-amber-300 font-bold">Бонус навичок: +${lastRoll.flatBonus}</span>` : ''}
-                </div>
-              `
-                : `
-                <div class="flex flex-col items-center justify-center py-8 text-center text-slate-500">
-                  <div class="text-2xl mb-1">💠</div>
-                  <div class="text-xs font-semibold">Стіл для кидків готовий</div>
-                  <div class="text-[11px]">Натисніть кнопку кидка вище, щоб зробити перевірку</div>
-                </div>
-              `
-            }
-          </div>
-        </div>
-      `;
-    }
-
-    /********************************************************************
-     * 18. ЛИСТ ПОРАНЕНЬ ТА ШКАЛА ХП (5 СТАНІВ ЗДОРОВ'Я)
-     ********************************************************************/
-    function renderWoundsAndHpBox(char) {
-      const maxHpCols = Number(char.stats.health || 1);
-
-      return `
-        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-6">
-          <div>
-            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div>
-                <h2 class="text-sm font-black uppercase tracking-wider text-white">🩸 Лист Поранень по Характеристиках</h2>
-                <p class="text-xs text-slate-400">Кожні 2 замальовані іконки в рядку дають штраф <b>−1 кубик</b> на перевірку цього стату</p>
-              </div>
-              <span class="text-[11px] px-2.5 py-0.5 rounded-full font-bold border ${
-                char.privacy.hideHealth
-                  ? 'bg-red-500/15 border-red-500/30 text-red-300'
-                  : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-              }">
-                ${char.privacy.hideHealth ? '🔒 Травми і ХП приховані' : '👁️ Стан ХП видимий іншим'}
-              </span>
-            </div>
-
-            <div class="space-y-2">
-              ${STATS.map(st => {
-                const row = char.wounds[st.id] || [false, false, false, false, false, false];
-                const penalty = getWoundPenalty(char, st.id);
-
-                return `
-                  <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800/90">
-                    <div class="w-32 sm:w-40 flex items-center gap-2">
-                      <span class="text-xl">${st.icon}</span>
-                      <div>
-                        <div class="text-xs font-bold text-slate-200">${st.name}</div>
-                        <div class="text-[10px] ${penalty > 0 ? 'text-red-400 font-bold' : 'text-slate-500'}">
-                          Штраф: −${penalty} 🎲
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="grid grid-cols-6 gap-1.5 flex-1 max-w-xs">
-                      ${row.map((marked, idx) => `
-                        <button
-                          type="button"
-                          onclick="toggleWoundCell('${st.id}', ${idx})"
-                          class="h-10 rounded-lg border transition-all flex items-center justify-center text-base ${
-                            marked
-                              ? 'bg-red-500/30 border-red-400 text-white shadow-[inset_0_0_10px_rgba(239,68,68,0.5)]'
-                              : 'bg-slate-900 border-slate-800 opacity-35 hover:opacity-75'
-                          }"
-                        >
-                          <span class="${marked ? 'line-through decoration-red-400 decoration-2' : ''}">${st.icon}</span>
-                        </button>
-                      `).join('')}
-                    </div>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          </div>
-
-          <div class="pt-4 border-t border-slate-800">
-            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div>
-                <h3 class="text-sm font-black uppercase tracking-wider text-white">❤️ Шкала Здоров'я (ХП Персонажа)</h3>
-                <p class="text-xs text-slate-400">
-                  Усі 5 станів фіксовані. Кількість активних кружечків у кожному рядку дорівнює вашому Здоров'ю: <b>${maxHpCols}</b>
-                </p>
-              </div>
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  onclick="stepHpDamage(true)"
-                  class="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-xs font-extrabold"
-                >
-                  −1 ХП (Шкода)
-                </button>
-                <button
-                  type="button"
-                  onclick="stepHpDamage(false)"
-                  class="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold"
-                >
-                  +1 ХП (Лікування)
-                </button>
-              </div>
-            </div>
-
-            <div class="space-y-2 bg-slate-950 p-4 rounded-xl border border-slate-800">
-              ${HP_ROWS.map((rowLabel, rIdx) => `
-                <div class="flex items-center justify-between gap-3 py-1">
-                  <span class="w-36 font-extrabold text-sm ${
-                    rIdx === 4 ? 'text-red-400' : rIdx >= 2 ? 'text-amber-300' : 'text-slate-200'
-                  }">
-                    ${rowLabel}
-                  </span>
-
-                  <div class="grid grid-cols-6 gap-2 flex-1 max-w-xs">
-                    ${[0, 1, 2, 3, 4, 5].map(cIdx => {
-                      const isAvailable = cIdx < maxHpCols;
-                      const isFilled = char.hpGrid?.[rIdx]?.[cIdx];
-
-                      if (!isAvailable) {
-                        return `
-                          <div
-                            class="w-9 h-9 rounded-full border border-slate-800 striped-disabled flex items-center justify-center text-[10px] text-slate-600 select-none"
-                            title="Недоступно (Здоров'я = ${maxHpCols})"
-                          >✕</div>
-                        `;
-                      }
-
-                      return `
-                        <button
-                          type="button"
-                          onclick="toggleHpCircle(${rIdx}, ${cIdx})"
-                          class="w-9 h-9 rounded-full border-2 transition-all flex items-center justify-center ${
-                            isFilled
-                              ? 'bg-red-500 border-red-300 text-slate-950 font-black shadow-[0_0_12px_rgba(239,68,68,0.6)]'
-                              : 'bg-slate-900 border-slate-500 hover:border-white'
-                          }"
-                        >
-                          ${isFilled ? '✕' : ''}
-                        </button>
-                      `;
-                    }).join('')}
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    /********************************************************************
-     * 19. КАРТКИ НАВИЧОК (З 3 ТИПАМИ ЕФЕКТІВ ТА ПРИХОВАНОЮ ФОРМОЮ)
-     ********************************************************************/
-    function renderSkillsBox(char) {
-      const skills = char.skills || [];
-      const isFormOpen = state.ui.skillFormOpen;
-      const effType = state.ui.newSkillEffectType || 'active';
-
-      return `
-        <section class="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-5">
-          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-            <div>
-              <div class="flex items-center gap-2.5">
-                <h2 class="text-base font-black uppercase tracking-wider text-white">🃏 Картки Навичок та Модифікатори</h2>
-                <span class="text-[11px] px-2.5 py-0.5 rounded-full font-bold border ${
-                  char.privacy.hideSkills
-                    ? 'bg-red-500/15 border-red-500/30 text-red-300'
-                    : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                }">
-                  ${char.privacy.hideSkills ? '🔒 Усі навички приховані' : '👁️ Відкриті навички видимі іншим'}
-                </span>
-              </div>
-              <p class="text-xs text-slate-400 mt-0.5">
-                Підтримуються 3 типи навичок: <b>⚡ Пасивні</b> (діють постійно), <b>🎯 Активні / Умовні</b> (вмикаються за умови) та <b>📘 Без ефектів</b> (описові).
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onclick="toggleSkillForm()"
-              class="px-4 py-2.5 rounded-xl font-extrabold text-xs uppercase tracking-wider transition-all ${
-                isFormOpen
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                  : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.3)]'
-              }"
-            >
-              ${isFormOpen ? '✕ Сховати конструктор' : '+ Створити нову навичку'}
-            </button>
-          </div>
-
-          ${
-            isFormOpen
-              ? `
-              <form onsubmit="addSkillFromForm(event)" class="bg-slate-950 border-2 border-cyan-500/40 rounded-xl p-4 space-y-4 shadow-xl">
-                <div class="flex items-center justify-between">
-                  <div class="text-xs font-extrabold uppercase tracking-wider text-cyan-400">
-                    ✨ Конструктор нової навички
-                  </div>
-                  <button type="button" onclick="toggleSkillForm()" class="text-xs text-slate-400 hover:text-white">Закрити ✕</button>
-                </div>
-
-                <!-- Вибір типу ефекту навички -->
-                <div>
-                  <label class="block text-[11px] font-bold uppercase text-slate-400 mb-1.5">Тип ефекту навички:</label>
-                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onclick="setNewSkillEffectType('passive')"
-                      class="p-2.5 rounded-xl border text-left text-xs font-bold transition-all ${
-                        effType === 'passive'
-                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
-                      }"
-                    >
-                      <div>⚡ Пасивний ефект</div>
-                      <div class="text-[10px] font-normal text-slate-400">Бонус кубиків діє постійно</div>
-                    </button>
-                    <button
-                      type="button"
-                      onclick="setNewSkillEffectType('active')"
-                      class="p-2.5 rounded-xl border text-left text-xs font-bold transition-all ${
-                        effType === 'active'
-                          ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
-                      }"
-                    >
-                      <div>🎯 Активний / Умовний</div>
-                      <div class="text-[10px] font-normal text-slate-400">Вмикається при виконанні умови</div>
-                    </button>
-                    <button
-                      type="button"
-                      onclick="setNewSkillEffectType('none')"
-                      class="p-2.5 rounded-xl border text-left text-xs font-bold transition-all ${
-                        effType === 'none'
-                          ? 'bg-purple-500/20 border-purple-400 text-purple-200'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
-                      }"
-                    >
-                      <div>📘 Без ефектів (РП / Опис)</div>
-                      <div class="text-[10px] font-normal text-slate-400">Без числових бонусів до кубів</div>
-                    </button>
-                  </div>
-                </div>
-
-                <div class="grid grid-cols-1 ${effType === 'none' ? 'md:grid-cols-1' : 'md:grid-cols-4'} gap-3">
-                  <div>
-                    <label class="block text-[11px] text-slate-400 mb-1">Назва навички *</label>
-                    <input id="skName" type="text" placeholder="Напр.: Тактичний аналіз" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white" required />
-                  </div>
-
-                  ${
-                    effType !== 'none'
-                      ? `
-                      <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Характеристика для кидка</label>
-                        <select id="skStat" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white">
-                          <option value="any">🌟 Будь-яка характеристика</option>
-                          ${STATS.map(s => `<option value="${s.id}">${s.icon}${s.name}</option>`).join('')}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Модифікатор кубиків (🎲)</label>
-                        <select id="skDiceMod" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white">
-                          <option value="-2">-2 кубики</option>
-                          <option value="-1">-1 кубик</option>
-                          <option value="0">0 кубиків</option>
-                          <option value="1" selected>+1 кубик</option>
-                          <option value="2">+2 кубики</option>
-                          <option value="3">+3 кубики</option>
-                          <option value="4">+4 кубики</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Бонус балів до результату</label>
-                        <select id="skFlatBonus" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white">
-                          <option value="0" selected>+0 балів</option>
-                          <option value="1">+1 бал</option>
-                          <option value="2">+2 бали</option>
-                          <option value="3">+3 бали</option>
-                        </select>
-                      </div>
-                    `
-                      : ''
-                  }
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label class="block text-[11px] text-slate-400 mb-1">Умова активації (необов'язково)</label>
-                    <input id="skCondition" type="text" placeholder="Напр.: Коли персонаж атакує із засідки" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white" />
-                  </div>
-                  <div>
-                    <label class="block text-[11px] text-slate-400 mb-1">Опис / ТЗ навички</label>
-                    <input id="skDesc" type="text" placeholder="Детальний опис дії навички..." class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white" />
-                  </div>
-                </div>
-
-                <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
-                  <label class="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                    <input id="skHidden" type="checkbox" class="rounded bg-slate-900 border-slate-700" />
-                    <span>🔒 Приховати цю навичку від інших гравців</span>
-                  </label>
-
-                  <div class="flex items-center gap-2">
-                    <button type="button" onclick="toggleSkillForm()" class="px-3.5 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">
-                      Скасувати
-                    </button>
-                    <button type="submit" class="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs">
-                      ✓ Зберегти Картку Навички
-                    </button>
-                  </div>
-                </div>
-              </form>
-            `
-              : ''
-          }
-
-          ${
-            skills.length === 0
-              ? `<div class="p-6 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400">
-                  Лист навичок порожній. Натисніть кнопку <b>«+ Створити нову навичку»</b>, щоб додати першу картку.
-                </div>`
-              : `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  ${skills.map(sk => {
-                    const stObj = STATS.find(s => s.id === sk.statId);
-                    const stLabel = sk.effectType === 'none'
-                      ? '📘 Описова навичка'
-                      : (stObj ? `${stObj.icon} ${stObj.name}` : '🌟 Всі характеристики');
-                    const isEffectivelyHidden = char.privacy.hideSkills || sk.hidden;
-                    const applied = isSkillApplied(sk);
-
-                    return `
-                      <div class="p-4 rounded-xl bg-slate-950 border ${applied ? 'border-cyan-500/50' : 'border-slate-800'} flex flex-col justify-between gap-3">
-                        <div class="space-y-2">
-                          <div class="flex items-start justify-between gap-2">
-                            <div>
-                              <div class="flex items-center gap-1.5 flex-wrap">
-                                <h3 class="font-extrabold text-sm text-white">${esc(sk.name)}</h3>
-                                ${isEffectivelyHidden ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-bold">🔒</span>' : ''}
-                              </div>
-                              <span class="text-[11px] text-slate-400">${stLabel}</span>
-                            </div>
-
-                            ${
-                              sk.effectType === 'none'
-                                ? `<span class="px-2.5 py-1 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 font-bold text-[11px] whitespace-nowrap">📘 Без ефектів</span>`
-                                : `<span class="px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-black text-xs whitespace-nowrap">
-                                    ${sk.diceMod >= 0 ? '+' + sk.diceMod : sk.diceMod} 🎲 ${sk.flatBonus > 0 ? `(+${sk.flatBonus})` : ''}
-                                  </span>`
-                            }
-                          </div>
-
-                          ${sk.condition ? `<div class="p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-amber-300"><b>Умова:</b> ${esc(sk.condition)}</div>` : ''}
-                          ${sk.description ? `<p class="text-xs text-slate-300 leading-relaxed">${esc(sk.description)}</p>` : ''}
-                        </div>
-
-                        <div class="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-                          ${
-                            sk.effectType === 'passive'
-                              ? `<span class="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold">⚡ Пасивна (Постійно)</span>`
-                              : sk.effectType === 'none'
-                              ? `<span class="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 text-[11px]">📘 РП / Опис</span>`
-                              : `<button
-                                  type="button"
-                                  onclick="toggleSkillActive('${esc(sk.id)}')"
-                                  class="px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
-                                    sk.active
-                                      ? 'bg-cyan-500 text-slate-950 border-cyan-400'
-                                      : 'bg-slate-900 text-slate-400 border-slate-700'
-                                  }"
-                                >
-                                  ${sk.active ? '✓ Умова активна' : '○ Умова вимкнена'}
-                                </button>`
-                          }
-
-                          <div class="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onclick="toggleSkillHidden('${esc(sk.id)}')"
-                              class="px-2 py-1 rounded-lg border text-[11px] font-bold ${
-                                sk.hidden
-                                  ? 'bg-red-500/15 border-red-500/40 text-red-300'
-                                  : 'bg-slate-900 border-slate-800 text-slate-300'
-                              }"
-                            >
-                              ${sk.hidden ? '🔒 Схована' : '👁️ Видима'}
-                            </button>
-                            <button
-                              type="button"
-                              onclick="deleteSkill('${esc(sk.id)}')"
-                              class="px-2 py-1 rounded-lg bg-red-500/15 border border-red-500/30 text-[11px] text-red-300 hover:bg-red-500/30"
-                            >
-                              🗑️
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    `;
-                  }).join('')}
-                </div>`
-          }
-        </section>
-      `;
-    }
-
-    /********************************************************************
-     * 20. СПОРЯДЖЕННЯ ТА ЖУРНАЛ КИДКІВ (ОСОБИСТИЙ + ЗАГАЛЬНИЙ КАМПАНІЇ)
-     ********************************************************************/
-    function renderInventoryBox(char) {
-      return `
-        <section class="w-full grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col">
-            <label class="text-xs font-black uppercase tracking-wider text-white mb-2">⭐⭐⭐ Бойове Спорядження та Зброя</label>
-            <textarea
-              rows="5"
-              oninput="updateTextField('equipment', this.value)"
-              placeholder="Бронежилет, зброя, набої, спецзасоби..."
-              class="w-full flex-1 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
-            >${esc(char.equipment)}</textarea>
-          </div>
-
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col">
-            <label class="text-xs font-black uppercase tracking-wider text-white mb-2">🎒 Рюкзак та Особисті Речі</label>
-            <textarea
-              rows="5"
-              oninput="updateTextField('backpack', this.value)"
-              placeholder="Аптечка, ліхтар, рація, припаси..."
-              class="w-full flex-1 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
-            >${esc(char.backpack)}</textarea>
-          </div>
-
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col">
-            <label class="text-xs font-black uppercase tracking-wider text-white mb-2">📄 Досьє, Квести та Нотатки</label>
-            <textarea
-              rows="5"
-              oninput="updateTextField('notes', this.value)"
-              placeholder="Історія персонажа, важливі імена, цілі..."
-              class="w-full flex-1 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
-            >${esc(char.notes)}</textarea>
-          </div>
-        </section>
-      `;
-    }
-
-    function renderRollLogBox(char) {
-      const scope = state.ui.rollLogScope || 'personal';
-      const personalLogs = getPersonalRollLogs(char);
-      const campaignLogs = state.campaignRollLogs || [];
-      const activeLogs = scope === 'personal' ? personalLogs : campaignLogs;
-
-      return `
-        <section class="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4">
-          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-            <div>
-              <h2 class="text-sm font-black uppercase tracking-wider text-white">📜 Журнал Кидків Кубиків</h2>
-              <p class="text-xs text-slate-400">Усі кидки зберігаються для конкретного персонажа та в загальній хроніці партії</p>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2">
-              <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  onclick="setRollLogScope('personal')"
-                  class="px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all ${
-                    scope === 'personal' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                  }"
-                >
-                  👤 Особистий: ${esc(char.name)} (${personalLogs.length})
-                </button>
-                <button
-                  type="button"
-                  onclick="setRollLogScope('campaign')"
-                  class="px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all ${
-                    scope === 'campaign' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                  }"
-                >
-                  🌍 Усі кидки кампанії (${campaignLogs.length})
-                </button>
-              </div>
-
-              ${
-                activeLogs.length > 0
-                  ? `<button type="button" onclick="clearRollLogs()" class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 hover:text-red-400">Очистити</button>`
-                  : ''
-              }
-            </div>
-          </div>
-
-          ${
-            activeLogs.length === 0
-              ? `<div class="p-6 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-500 italic">
-                  У цьому журналі ще немає записів кидків. Зробіть кидок у Столі Кидків вище!
-                </div>`
-              : `<div class="space-y-2">
-                  ${activeLogs.map(item => `
-                    <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-                      <div class="space-y-1">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <span class="text-slate-500 font-mono">[${esc(item.time)}]</span>
-                          <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 font-bold text-cyan-300">
-                            👤 ${esc(item.charName || char.name)}
-                          </span>
-                          <b class="text-white">${item.statIcon || '🎲'} ${esc(item.statName)}</b>
-                          <span class="text-slate-400">(Пул: ${item.diceCount}🎲)</span>
-                        </div>
-                        ${
-                          item.skillNames && item.skillNames.length > 0
-                            ? `<div class="text-[11px] text-emerald-400">Навички: ${esc(item.skillNames.join(', '))}</div>`
-                            : ''
-                        }
-                      </div>
-
-                      <div class="flex items-center gap-3">
-                        <div class="flex items-center gap-1">
-                          ${(item.results || []).map(r => `
-                            <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-slate-900 border ${ r.points === 2 ? 'border-cyan-400 text-cyan-300' : r.points === 1 ? 'border-slate-600 text-slate-200' : 'border-slate-800 text-slate-600' } text-[10px] font-black">${r.points}</span>
-                          `).join('')}
-                        </div>
-                        <div class="px-3 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 font-black text-sm text-cyan-300">
-                          Сума: ${item.totalScore}
-                        </div>
-                      </div>
-                    </div>
-                  `).join('')}
-                </div>`
-          }
-        </section>
-      `;
-    }
-
-    /********************************************************************
-     * 21. ГОЛОВНА ФУНКЦІЯ РЕНДЕРУ З ПОВНИМ ЗАХИСТОМ
-     ********************************************************************/
-    function renderApp() {
-      const root = document.getElementById('app');
-      if (!root) return;
-
-      try {
-        if (!state.session.loggedIn) {
-          root.innerHTML = renderLoginScreen();
-        } else {
-          root.innerHTML = renderMainSheet();
-        }
-      } catch (err) {
-        console.error('Помилка рендеру:', err);
-        root.innerHTML = `
-          <div class="min-h-screen flex items-center justify-center p-6 bg-slate-950 text-white">
-            <div class="max-w-md w-full bg-slate-900 border border-red-500/40 rounded-2xl p-6 text-center space-y-4">
-              <h2 class="text-lg font-black text-red-400">Виявлено конфлікт старого кешу</h2>
-              <p class="text-xs text-slate-300">Натисніть кнопку нижче, щоб очистити пошкоджений кеш браузера і запустити чисту систему.</p>
-              <button onclick="resetAllLocalData()" class="w-full py-3 rounded-xl bg-cyan-500 text-slate-950 font-black text-sm">
-                🔄 Очистити кеш і запустити
-              </button>
-            </div>
-          </div>
-        `;
-      }
-    }
-
-    // Старт системи
-    loadDatabase();
-    renderApp();
-  </script>
-</body>
-</html>
+      if (approve && char.inspiration.count > 0
