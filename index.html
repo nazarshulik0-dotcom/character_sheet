@@ -1,0 +1,3623 @@
+<!DOCTYPE html>
+<html lang="uk" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ЕНТРОПІЯ — Інтерактивна Карта Ковчега Вавилонії</title>
+    <!-- Вбудований стан карти (автоматично оновлюється при скачуванні оновленого index.html) -->
+    <script id="embedded-map-state" type="application/json">
+{
+  "unlockedSectors": {
+    "0": true,
+    "1": true,
+    "2": true,
+    "3": true,
+    "4": true,
+    "5": true,
+    "6": true,
+    "7": true,
+    "8": true
+  },
+  "useBiomeDesign": true,
+  "showSectors": true,
+  "showLabels": true,
+  "adminPin": "ентропія",
+  "githubRepo": "nazarshulik0-dotcom/entropia_map",
+  "groupTransfer": null,
+  "markers": null
+}
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Orbitron:wght@500;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #060911;
+            --panel-bg: rgba(10, 15, 26, 0.94);
+            --accent-cyan: #22d3ee;
+            --accent-amber: #f59e0b;
+            --accent-crimson: #f43f5e;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-dark);
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .font-mono-tech {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .font-display {
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(56, 189, 248, 0.3);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(56, 189, 248, 0.6);
+        }
+
+        .glass-panel {
+            background: rgba(10, 16, 28, 0.90);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(56, 189, 248, 0.18);
+        }
+
+        .tool-btn-active {
+            background: rgba(34, 211, 238, 0.18) !important;
+            border-color: #22d3ee !important;
+            color: #67e8f9 !important;
+            box-shadow: 0 0 14px rgba(34, 211, 238, 0.25);
+        }
+
+        @keyframes denialPulse {
+            0%, 100% { transform: translate(-50%, 0) scale(1); box-shadow: 0 0 25px rgba(244, 63, 94, 0.45); }
+            25% { transform: translate(-52%, 0) scale(1.02); }
+            75% { transform: translate(-48%, 0) scale(1.02); }
+        }
+
+        .babylon-denial-alert {
+            animation: denialPulse 0.38s ease-in-out;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body class="relative flex flex-col w-screen h-screen overflow-hidden select-none">
+
+    <!-- TOP HEADER BAR -->
+    <header class="glass-panel z-30 flex items-center justify-between px-3 py-2 border-b border-cyan-500/20 shrink-0">
+        <!-- Brand & Project Title -->
+        <div class="flex items-center gap-3">
+            <div class="relative flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-950/80 border border-cyan-400/40 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+                <svg class="w-5 h-5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"></polygon>
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <line x1="12" y1="2" x2="12" y2="9"></line>
+                    <line x1="12" y1="15" x2="12" y2="22"></line>
+                    <line x1="2" y1="12" x2="9" y2="12"></line>
+                    <line x1="15" y1="12" x2="22" y2="12"></line>
+                </svg>
+                <span class="absolute -top-0.5 -right-0.5 w-2 h-2 bg-cyan-400 rounded-full animate-ping"></span>
+            </div>
+            <div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <h1 class="font-display text-sm sm:text-base font-bold tracking-wider text-white uppercase">ЕНТРОПІЯ</h1>
+                    <span class="hidden sm:inline-block px-2 py-0.5 text-[10px] font-mono-tech font-semibold uppercase tracking-widest bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 rounded">
+                        Ковчег Вавилонії
+                    </span>
+                    <span id="role-status-badge" class="px-2 py-0.5 text-[10px] font-mono-tech font-semibold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700 rounded">
+                        👁️ Режим Гравця
+                    </span>
+                    <span id="char-name-badge" class="hidden px-2 py-0.5 text-[10px] font-mono-tech font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 rounded">
+                        👤 Гість
+                    </span>
+                    <span id="cloud-sync-badge" class="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-mono-tech bg-emerald-950/70 text-emerald-300 border border-emerald-500/30 rounded" title="Статус синхронізації карти (MQTT + Cloud)">
+                        <span id="cloud-sync-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        <span id="cloud-sync-text">Активно</span>
+                    </span>
+                </div>
+                <p class="text-[11px] text-slate-400 hidden md:block">Глобальна карта 9 біомів Ковчега (#317) • Клікніть на відкритий сектор для огляду та переходу</p>
+            </div>
+        </div>
+
+        <!-- Center Quick Sector View Switcher -->
+        <div class="hidden lg:flex items-center gap-2 px-3 py-1 rounded-xl bg-slate-900/90 border border-slate-700/70 text-xs">
+            <span class="text-slate-400">Відкрито секторів:</span>
+            <span id="header-unlocked-count" class="font-mono-tech font-bold text-cyan-300">9 / 9</span>
+            <span class="text-slate-600">|</span>
+            <span id="header-focus-sector" class="text-amber-300 font-medium">Огляд: Увесь Ковчег</span>
+            <button type="button" id="header-group-sector-btn" onclick="joinActiveGroupSector()" class="hidden ml-1 px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/50 text-[11px] text-emerald-200 font-mono-tech transition cursor-pointer">
+                📍 Група в Секторі I →
+            </button>
+        </div>
+
+        <!-- Right Actions: Export / Project JSON / Admin Access Lock -->
+        <div class="flex items-center gap-1.5 sm:gap-2">
+            <button type="button" onclick="exportMapPNG()" title="Завантажити карту як зображення PNG" class="px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/50 text-xs text-slate-200 flex items-center gap-1.5 transition cursor-pointer">
+                <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                <span class="hidden sm:inline">PNG</span>
+            </button>
+
+            <button type="button" onclick="downloadUpdatedIndexHtml()" id="admin-download-html-btn" title="Скачати оновлений index.html з усіма змінами для GitHub Pages" class="hidden px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/50 text-xs text-emerald-200 font-medium flex items-center gap-1.5 transition cursor-pointer">
+                <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                <span class="hidden sm:inline">Оновити HTML</span>
+            </button>
+
+            <button type="button" onclick="openJsonModal()" id="admin-json-btn" title="Синхронізація GitHub / Експорт стану карти (JSON)" class="hidden px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/50 text-xs text-slate-200 flex items-center gap-1.5 transition cursor-pointer">
+                <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+                <span class="hidden sm:inline">Синхр. / Код</span>
+            </button>
+
+            <button type="button" onclick="toggleSidebar()" id="sidebar-toggle-btn" class="hidden px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-xs text-cyan-200 font-medium flex items-center gap-1.5 transition cursor-pointer">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/></svg>
+                <span class="hidden md:inline">Панель Адміна</span>
+            </button>
+
+            <button type="button" onclick="handleAdminButtonClick()" id="admin-lock-btn" title="Перемкнути режим Гравця / Адміна (Майстра)" class="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-xs text-amber-200 font-medium flex items-center gap-1.5 transition cursor-pointer">
+                <span id="admin-lock-icon">🔒</span>
+                <span id="admin-lock-text" class="hidden sm:inline">Вхід Адміна</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN WORKSPACE -->
+    <div class="relative flex-1 flex overflow-hidden">
+
+        <!-- LEFT / ADMIN SIDEBAR PANEL (ONLY VISIBLE TO ADMIN) -->
+        <aside id="main-sidebar" class="hidden glass-panel z-20 w-80 sm:w-96 h-full flex flex-col border-r border-cyan-500/20 transition-all duration-300 shrink-0">
+            
+            <!-- Sidebar Navigation Tabs (1. Острів, 2. Мітки, 3. Сектори) -->
+            <div class="grid grid-cols-3 gap-1.5 p-2 bg-slate-950/80 border-b border-slate-800 shrink-0">
+                <button type="button" onclick="switchSidebarTab('island')" id="tab-btn-island" class="py-2 px-2 rounded-lg text-xs font-semibold flex flex-col items-center gap-1 transition cursor-pointer">
+                    <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span>1. Острів</span>
+                </button>
+                <button type="button" onclick="switchSidebarTab('markers')" id="tab-btn-markers" class="py-2 px-2 rounded-lg text-xs font-semibold flex flex-col items-center gap-1 transition cursor-pointer">
+                    <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span>2. Мітки <span id="markers-count-badge" class="px-1.5 py-0.2 text-[10px] rounded-full bg-amber-500/20 text-amber-300">10</span></span>
+                </button>
+                <button type="button" onclick="switchSidebarTab('sectors')" id="tab-btn-sectors" class="py-2 px-2 rounded-lg text-xs font-semibold flex flex-col items-center gap-1 transition cursor-pointer">
+                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>
+                    <span>3. Сектори</span>
+                </button>
+            </div>
+
+            <!-- TAB 1: ОСТРІВ (ПРИХОВУВАННЯ НЕВІДКРИТИХ СЕКТОРІВ + ГЛОБАЛЬНІ БІОМИ) -->
+            <div id="tab-content-island" class="flex-1 overflow-y-auto p-4 space-y-4">
+                <!-- Fixed Parameters Notice -->
+                <div class="p-3 rounded-xl bg-cyan-950/40 border border-cyan-500/30 flex items-start gap-2.5">
+                    <svg class="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    <div class="text-xs text-slate-300 leading-relaxed">
+                        <span class="font-semibold text-cyan-300">Геометрію та руїни зафіксовано:</span> Острів #317, квартали руїн та сітка заблоковані від випадкових змін. Нижче ви керуєте лише **відкриттям секторів за сюжетом** та **відображенням глобальних біомів**.
+                    </div>
+                </div>
+
+                <!-- Quick Reveal / Hide All Sectors -->
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-semibold uppercase tracking-wider text-slate-200">Туман війни (Відкриті сектори)</label>
+                        <div class="flex items-center gap-1.5">
+                            <button type="button" onclick="setAllSectorsUnlocked(true)" class="px-2 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-[11px] text-emerald-300 font-medium transition cursor-pointer">
+                                Відкрити всі
+                            </button>
+                            <button type="button" onclick="setOnlyStartSectorUnlocked()" class="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[11px] text-amber-300 font-medium transition cursor-pointer" title="Залишити відкритим лише Сектор I, де стоїть стартовий Вагон Метро">
+                                Тільки старт (I)
+                            </button>
+                            <button type="button" onclick="setAllSectorsUnlocked(false)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] text-slate-300 transition cursor-pointer">
+                                Сховати всі
+                            </button>
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-slate-400">Якщо сектор вимкнено, він повністю закритий голографічним куполом невідомості (ні рельєф, ні руїни, ні мітки всередині не відображаються гравцям).</p>
+                </div>
+
+                <!-- List of 9 Biomes with Visibility Toggles -->
+                <div id="island-sectors-list" class="space-y-2">
+                    <!-- Dynamically populated with the 9 Biomes (0 + I..VIII) -->
+                </div>
+
+                <!-- Global Biome Visual Style Controls -->
+                <div class="p-3.5 rounded-xl bg-slate-900/75 border border-slate-800 space-y-3">
+                    <h3 class="text-xs font-semibold uppercase tracking-wider text-cyan-400">Відображення глобальних біомів</h3>
+
+                    <label class="flex items-center justify-between cursor-pointer text-xs text-slate-200">
+                        <span>Дизайн острова під глобальні біоми</span>
+                        <input type="checkbox" id="toggle-biome-colors" checked onchange="toggleBiomeDisplayOptions()" class="w-4 h-4 accent-cyan-400 rounded cursor-pointer">
+                    </label>
+
+                    <label class="flex items-center justify-between cursor-pointer text-xs text-slate-200">
+                        <span>Межі секторів та купол Бар'єра</span>
+                        <input type="checkbox" id="toggle-sector-borders" checked onchange="toggleBiomeDisplayOptions()" class="w-4 h-4 accent-cyan-400 rounded cursor-pointer">
+                    </label>
+
+                    <label class="flex items-center justify-between cursor-pointer text-xs text-slate-200">
+                        <span>Підписи назв руїн при наближенні</span>
+                        <input type="checkbox" id="toggle-ruin-titles" checked onchange="toggleBiomeDisplayOptions()" class="w-4 h-4 accent-cyan-400 rounded cursor-pointer">
+                    </label>
+                </div>
+            </div>
+
+            <!-- TAB 2: МІТКИ (ДОДАВАННЯ, РЕДАГУВАННЯ НАЗВИ Й ОПИСУ, ВИДАЛЕННЯ) -->
+            <div id="tab-content-markers" class="hidden flex-1 overflow-y-auto p-4 space-y-4">
+                
+                <!-- Mode Switcher: Select/Edit vs Place New Marker -->
+                <div class="grid grid-cols-2 gap-1.5">
+                    <button type="button" onclick="setEditorTool('pan')" id="tool-btn-pan" class="p-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-medium flex items-center justify-center gap-2 transition cursor-pointer">
+                        <svg class="w-4 h-4 text-cyan-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5"/></svg>
+                        <span>Вибір / Редагування</span>
+                    </button>
+                    <button type="button" onclick="setEditorTool('marker')" id="tool-btn-marker" class="p-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-medium flex items-center justify-center gap-2 transition cursor-pointer">
+                        <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/></svg>
+                        <span>+ Поставити мітку</span>
+                    </button>
+                </div>
+
+                <!-- EDIT EXISTING MARKER PANEL -->
+                <div id="edit-marker-box" class="hidden p-3.5 rounded-xl bg-amber-950/30 border border-amber-400/50 space-y-3 shadow-lg">
+                    <div class="flex items-center justify-between border-b border-amber-500/20 pb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-amber-300">Редагування обраної мітки</h3>
+                        </div>
+                        <button type="button" onclick="deselectItem()" class="text-xs text-slate-400 hover:text-white cursor-pointer">✕</button>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] text-slate-300 block mb-1">Категорія іконки:</label>
+                        <select id="edit-marker-category" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400">
+                            <option value="ciel">💠 СІЕЛЬ / Центральне Ядро</option>
+                            <option value="beacon">🗼 Маяк Архангела</option>
+                            <option value="metro">🚇 Вагон метро (Точка старту)</option>
+                            <option value="ruins">🏛️ Особливий бункер / Руїни</option>
+                            <option value="corruption">☣️ Прорив Скверни / Аномалія</option>
+                            <option value="camp">⛺ Табір / Поселення</option>
+                            <option value="nature">⛰️ Природний орієнтир</option>
+                            <option value="note">📍 Нотатка / Подія</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] text-slate-300 block mb-1">Назва мітки:</label>
+                        <input type="text" id="edit-marker-title" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400">
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] text-slate-300 block mb-1">Опис та нотатки:</label>
+                        <textarea id="edit-marker-notes" rows="3" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"></textarea>
+                    </div>
+
+                    <div class="flex items-center justify-between gap-2 pt-1">
+                        <button type="button" onclick="saveEditedMarker()" class="flex-1 py-2 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition shadow cursor-pointer">
+                            💾 Зберегти зміни
+                        </button>
+                        <button type="button" onclick="deleteSelectedItem()" class="py-2 px-3 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-rose-300 text-xs font-medium transition cursor-pointer">
+                            Видалити
+                        </button>
+                    </div>
+                </div>
+
+                <!-- CREATE NEW MARKER CONFIG -->
+                <div id="create-marker-box" class="hidden p-3.5 rounded-xl bg-slate-900/90 border border-cyan-500/40 space-y-2.5">
+                    <div class="text-xs font-semibold text-cyan-300">Нова мітка на карті</div>
+                    <div>
+                        <label class="text-[11px] text-slate-400 block mb-1">Тип локації:</label>
+                        <select id="new-marker-category" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-400">
+                            <option value="note">📍 Нотатка / Інтерес</option>
+                            <option value="camp">⛺ Табір / Поселення</option>
+                            <option value="ruins">🏛️ Особливий бункер / Руїни</option>
+                            <option value="corruption">☣️ Прорив Скверни / Аномалія</option>
+                            <option value="nature">⛰️ Природний орієнтир</option>
+                            <option value="metro">🚇 Станція / Вагон метро</option>
+                            <option value="beacon">🗼 Маяк Архангела</option>
+                            <option value="ciel">💠 Вузол СІЕЛЬ</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-[11px] text-slate-400 block mb-1">Назва нової мітки:</label>
+                        <input type="text" id="new-marker-title" placeholder="Напр.: Покинутий термінал зв'язку" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-400">
+                    </div>
+                    <div>
+                        <label class="text-[11px] text-slate-400 block mb-1">Опис:</label>
+                        <textarea id="new-marker-notes" rows="2" placeholder="Опис локації, знахідки, загрози..." class="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-400"></textarea>
+                    </div>
+                    <p class="text-[11px] text-cyan-300 font-medium pt-1">👉 Клікніть у будь-яку точку острова на карті, щоб встановити цю мітку.</p>
+                </div>
+
+                <!-- All Markers List -->
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300">Встановлені мітки (клік для змін)</h3>
+                        <button type="button" onclick="resetToBaseMarkers()" class="text-[11px] text-cyan-400 hover:text-cyan-300 transition cursor-pointer">
+                            Скинути базові 10
+                        </button>
+                    </div>
+                    <div id="markers-list-container" class="space-y-1.5 max-h-[380px] overflow-y-auto pr-1"></div>
+                </div>
+            </div>
+
+            <!-- TAB 3: ДЕТАЛЬНА КАРТА ОКРЕМИХ СЕКТОРІВ -->
+            <div id="tab-content-sectors" class="hidden flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="p-3 rounded-xl bg-emerald-950/35 border border-emerald-500/30 text-xs text-slate-200 leading-relaxed">
+                    Оберіть будь-який сектор нижче, щоб перемкнути головний екран у **режим детальної тактичної карти сектора** (з великим планом рельєфу біома, всіма кварталами зруйнованих споруд, мітками та досьє Архангела).
+                </div>
+
+                <button type="button" onclick="exitDetailedSectorMode()" id="btn-exit-sector-mode" class="w-full py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-cyan-400/40 text-xs font-bold text-cyan-300 flex items-center justify-center gap-2 transition cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                    <span>Повернутися до глобальної карти всього острова</span>
+                </button>
+
+                <div class="space-y-1.5">
+                    <label class="text-xs font-semibold uppercase tracking-wider text-slate-300">Оберіть сектор для детального огляду:</label>
+                    <div id="detailed-sector-cards" class="grid grid-cols-1 gap-2"></div>
+                </div>
+
+                <div id="sector-dossier-card" class="hidden p-3.5 rounded-xl bg-slate-900/90 border border-emerald-500/40 space-y-2.5"></div>
+            </div>
+
+            <!-- Sidebar Footer: Permanent Master Password Status -->
+            <div class="p-3 bg-slate-950/90 border-t border-slate-800 space-y-1.5 shrink-0">
+                <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-slate-400">Доступ Майстра:</span>
+                    <span class="font-mono-tech text-xs text-emerald-300 font-semibold">Постійний пароль активний</span>
+                </div>
+                <div class="flex items-center justify-between text-[10px] text-slate-500">
+                    <span id="session-uid-display" class="truncate max-w-[180px]">Збереження активне</span>
+                    <span class="font-mono-tech">ARK #317 SYNC</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- INTERACTIVE MAP CANVAS CONTAINER -->
+        <main class="relative flex-1 h-full bg-[#05080f] overflow-hidden" id="canvas-wrapper">
+            <canvas id="map-canvas"></canvas>
+
+            <!-- Top-Left Floating Status Banner & Selected Item Inspector -->
+            <div class="absolute top-3 left-3 z-10 flex flex-col gap-2 pointer-events-none max-w-xs sm:max-w-md">
+                <div id="active-tool-banner" class="glass-panel px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs text-slate-200 shadow-lg">
+                    <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                    <span id="active-tool-label">Клікніть на сектор для огляду регіону або на мітку/руїну для деталей</span>
+                </div>
+
+                <!-- Active Sector Focus & Tactical Entry Floating Card (For Both Players & Master) -->
+                <div id="sector-focus-banner" class="hidden glass-panel p-3.5 rounded-2xl border border-emerald-400/50 shadow-2xl pointer-events-auto space-y-2.5">
+                    <div class="flex items-start justify-between gap-3 border-b border-slate-800/90 pb-2">
+                        <div>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="text-[10px] font-mono-tech uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300" id="focus-banner-subtitle">ОГЛЯД СЕКТОРА</span>
+                                <span id="focus-banner-fog-warning" class="hidden text-[10px] font-mono-tech uppercase px-1.5 py-0.5 rounded bg-rose-500/25 border border-rose-500/50 text-rose-300">
+                                    🔒 Приховано туманом для гравців
+                                </span>
+                            </div>
+                            <h3 class="text-sm font-bold text-white mt-1" id="focus-banner-title">Сектор I: Карантинні Сади</h3>
+                        </div>
+                        <button type="button" onclick="exitDetailedSectorMode()" title="Повернутися до всієї карти" class="px-2 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-600/60 text-[11px] text-slate-200 font-medium transition cursor-pointer shrink-0">
+                            ← Весь острів
+                        </button>
+                    </div>
+
+                    <p id="focus-banner-desc" class="text-xs text-slate-300 leading-relaxed"></p>
+
+                    <div class="flex items-center justify-between text-[11px] font-mono-tech text-slate-400 bg-slate-950/75 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                        <span id="focus-banner-archangel" class="text-cyan-300 truncate">Маяк Архангела I</span>
+                        <span id="focus-banner-stats" class="text-amber-300 shrink-0">2 мітки • 4 руїни</span>
+                    </div>
+
+                    <!-- Player Entry Button -->
+                    <div id="focus-player-actions" class="pt-0.5">
+                        <button type="button" onclick="enterFocusedSectorMap(false)" class="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-[0_0_18px_rgba(34,211,238,0.3)] transition cursor-pointer">
+                            <span>🗺️ Увійти в сектор (Детальна карта)</span>
+                            <span id="focus-player-file-badge" class="font-mono-tech text-[10px] px-1.5 py-0.5 rounded bg-slate-950/25 text-slate-950">sector1.html</span>
+                        </button>
+                    </div>
+
+                    <!-- Master Dual Action Buttons (Only visible in Master/Admin mode) -->
+                    <div id="focus-master-actions" class="hidden pt-1 space-y-1.5 border-t border-slate-800">
+                        <div class="text-[10px] font-mono-tech uppercase tracking-wider text-amber-300">Керування переходом (Майстер):</div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            <button type="button" onclick="enterFocusedSectorMap(false)" class="py-2 px-2.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/50 text-cyan-200 font-semibold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer">
+                                <span>👁️ Оглянути (Тільки я)</span>
+                            </button>
+                            <button type="button" onclick="transferGroupToFocusedSector()" class="py-2 px-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.3)] transition cursor-pointer">
+                                <span>📡 Перевести групу</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Selected Marker OR Ruin Complex Inspector Card -->
+                <div id="selected-item-card" class="hidden glass-panel p-3.5 rounded-xl border border-cyan-400/40 shadow-2xl pointer-events-auto space-y-2.5">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <span id="sel-item-badge" class="text-[10px] font-mono-tech uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">Мітка</span>
+                            <h4 id="sel-item-title" class="text-sm font-bold text-white mt-1">Назва об'єкта</h4>
+                        </div>
+                        <button type="button" onclick="deselectItem()" class="text-slate-400 hover:text-white p-1 cursor-pointer">✕</button>
+                    </div>
+                    <p id="sel-item-desc" class="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap"></p>
+
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-800 text-[11px] font-mono-tech text-slate-400">
+                        <span id="sel-item-coords">X: 0 км, Y: 0 км</span>
+                        <div id="sel-admin-actions" class="flex items-center gap-2 font-sans">
+                            <button type="button" onclick="openMarkerEditFromCard()" id="sel-btn-edit" class="text-amber-300 hover:text-amber-200 font-medium cursor-pointer">
+                                ✏️ Змінити
+                            </button>
+                            <button type="button" onclick="deleteSelectedItem()" id="sel-btn-delete" class="text-rose-400 hover:text-rose-300 font-medium cursor-pointer">
+                                Видалити
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BABYLON SYSTEM FOG OF WAR DENIAL ALERT BANNER -->
+            <div id="babylon-denial-banner" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 hidden pointer-events-none w-[92%] max-w-lg">
+                <div class="babylon-denial-alert glass-panel px-4 py-3 rounded-2xl border-2 border-rose-500/80 bg-rose-950/90 text-center shadow-[0_0_30px_rgba(244,63,94,0.5)] space-y-1">
+                    <div class="flex items-center justify-center gap-2 text-rose-300 font-mono-tech text-xs font-bold tracking-wider uppercase">
+                        <span>⚠️</span>
+                        <span id="babylon-denial-code">[СИСТЕМА ВАВИЛОНІЯ: ДОСТУП ЗАБЛОКОВАНО]</span>
+                        <span>⚠️</span>
+                    </div>
+                    <p id="babylon-denial-text" class="text-xs font-mono-tech text-rose-100">
+                        СЕКТОР ПІД КАРАНТИНОМ АБО НЕ РОЗВІДАНО. СИНХРОНІЗУЙТЕ МАЯК АРХАНГЕЛА.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Right Floating Viewport Controls -->
+            <div class="absolute top-3 right-3 z-10 flex flex-col gap-1.5">
+                <button type="button" onclick="zoomMap(1.25)" title="Наблизити" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-200 hover:text-cyan-300 hover:border-cyan-400/50 transition shadow-lg cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                </button>
+                <button type="button" onclick="zoomMap(0.8)" title="Віддалити" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-200 hover:text-cyan-300 hover:border-cyan-400/50 transition shadow-lg cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+                </button>
+                <button type="button" onclick="resetViewport()" title="Центрувати весь острів" class="glass-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-200 hover:text-cyan-300 hover:border-cyan-400/50 transition shadow-lg cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                </button>
+            </div>
+
+            <!-- Bottom Telemetry HUD Bar -->
+            <div class="absolute bottom-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+                <div class="glass-panel px-3.5 py-2 rounded-xl flex flex-wrap items-center gap-3 sm:gap-5 text-xs font-mono-tech shadow-xl">
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-slate-400">КООРД:</span>
+                        <span id="hud-coords" class="text-cyan-300 font-semibold">X: +0.0 км | Y: +0.0 км</span>
+                    </div>
+                    <div class="hidden sm:flex items-center gap-1.5">
+                        <span class="text-slate-400">БІОМ:</span>
+                        <span id="hud-polar" class="text-slate-200">Сектор 0 (Комплекс «СІЕЛЬ»)</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-slate-400">СТАТУС:</span>
+                        <span id="hud-elevation" class="text-emerald-300">Відкрита зона</span>
+                    </div>
+                </div>
+
+                <!-- Dynamic Map Scale Bar -->
+                <div class="glass-panel px-3.5 py-2 rounded-xl flex items-center gap-3 text-xs font-mono-tech shadow-xl">
+                    <span id="scale-bar-label" class="text-slate-300">20 км</span>
+                    <div class="w-24 h-2 border-b-2 border-l-2 border-r-2 border-cyan-400 relative">
+                        <div class="absolute left-1/2 bottom-0 w-0.5 h-1.5 bg-cyan-400/60"></div>
+                    </div>
+                    <span id="hud-zoom" class="text-slate-400">100%</span>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ADMIN LOGIN MODAL (NO HINTS) -->
+    <div id="admin-login-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-sm rounded-2xl border border-amber-500/40 p-5 space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-amber-400">🔒</span>
+                    <h3 class="font-display text-sm font-bold uppercase tracking-wider text-amber-300">Доступ Адміна (Майстра)</h3>
+                </div>
+                <button type="button" onclick="closeAdminLoginModal()" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+            <p class="text-xs text-slate-300 leading-relaxed">
+                Введіть пароль доступу Майстра, щоб відкрити панель керування секторами та мітками:
+            </p>
+            <input type="password" id="admin-login-pin" placeholder="Введіть пароль..." onkeydown="if(event.key==='Enter') verifyAdminLogin()" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 font-mono-tech text-sm text-center text-amber-300 focus:outline-none focus:border-amber-400">
+            <div class="flex items-center justify-end gap-2 pt-1">
+                <button type="button" onclick="closeAdminLoginModal()" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition cursor-pointer">
+                    Скасувати
+                </button>
+                <button type="button" onclick="verifyAdminLogin()" class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition cursor-pointer">
+                    Увійти
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL FOR JSON EXPORT / IMPORT & GITHUB SYNC -->
+    <div id="json-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-lg rounded-2xl border border-cyan-500/30 p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="font-display text-sm font-bold uppercase tracking-wider text-cyan-300">Синхронізація Сайту та Код Карти</h3>
+                <button type="button" onclick="closeJsonModal()" class="text-slate-400 hover:text-white cursor-pointer">✕</button>
+            </div>
+
+            <!-- Way 1: 1-Click Updated HTML Download -->
+            <div class="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 space-y-2">
+                <div class="text-xs font-bold text-emerald-300">Спосіб 1: Вшити зміни прямо у файл сайту (Без токенів)</div>
+                <p class="text-[11px] text-slate-300 leading-relaxed">
+                    Натисніть кнопку нижче, щоб завантажити готовий файл <code class="text-emerald-300">index.html</code>, у який вже збережені всі ваші відкриті/сховані сектори та мітки. Замініть ним файл на GitHub — і на всіх пристроях карта відкриється з вашими змінами.
+                </p>
+                <button type="button" onclick="downloadUpdatedIndexHtml()" class="w-full py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition shadow cursor-pointer">
+                    💾 Завантажити оновлений index.html для GitHub
+                </button>
+            </div>
+
+            <!-- Way 2: Live Auto-Sync via GitHub API -->
+            <div class="p-3.5 rounded-xl bg-slate-900/90 border border-amber-500/30 space-y-2.5">
+                <div class="text-xs font-bold text-amber-300">Спосіб 2: Авто-синхронізація в реальному часі (GitHub API)</div>
+                <p class="text-[11px] text-slate-300 leading-relaxed">
+                    Щоб зміни з панелі Адміна миттєво передавалися гравцям на <code class="text-cyan-300">nazarshulik0-dotcom.github.io/entropia_map</code> без перезаливки HTML, введіть ваш GitHub Репозиторій та Personal Access Token (з правом <code class="text-amber-200">repo</code> або <code class="text-amber-200">contents:write</code>):
+                </p>
+                <div class="space-y-2">
+                    <input type="text" id="github-repo-input" value="nazarshulik0-dotcom/entropia_map" placeholder="власник/репозиторій" class="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 font-mono-tech text-xs text-cyan-200 focus:outline-none focus:border-amber-400">
+                    <input type="password" id="github-token-input" placeholder="ghp_... (GitHub Token для авто-збереження)" class="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 font-mono-tech text-xs text-amber-300 focus:outline-none focus:border-amber-400">
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="connectGithubLiveSync()" class="flex-1 py-2 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition cursor-pointer">
+                        ☁️ Увімкнути та зберегти в GitHub зараз
+                    </button>
+                </div>
+            </div>
+
+            <!-- Raw JSON Backup -->
+            <div class="space-y-2 pt-1 border-t border-slate-800">
+                <div class="text-xs font-semibold text-slate-300">Резервний JSON-код стану карти:</div>
+                <textarea id="json-textarea" rows="4" class="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-700 font-mono-tech text-xs text-cyan-200 focus:outline-none focus:border-cyan-400"></textarea>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <button type="button" onclick="copyCharacterSheetIntegrationSnippet()" class="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-xs font-medium text-amber-200 transition cursor-pointer">
+                        📋 Код інтеграції для character_sheet
+                    </button>
+                    <button type="button" onclick="copyJsonToClipboard()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition cursor-pointer">
+                        Копіювати JSON
+                    </button>
+                    <button type="button" onclick="importJsonFromModal()" class="px-3.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold transition cursor-pointer">
+                        Завантажити з JSON
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION -->
+    <div id="toast-box" class="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 transition-opacity duration-300">
+        <div class="glass-panel px-4 py-2 rounded-full border border-cyan-400/50 text-xs font-medium text-cyan-200 shadow-2xl flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+            <span id="toast-text">Збережено</span>
+        </div>
+    </div>
+
+    <script>
+        /***********************************************************************
+         * 1. GLOBAL BIOMES OF THE ARK OF BABYLON (9 SECTORS: 0 + I..VIII)
+         ***********************************************************************/
+        const ARK_BIOMES = {
+            0: {
+                id: 0,
+                code: 'СЕКТОР 0',
+                shortName: 'Центр • Комплекс «СІЕЛЬ»',
+                name: 'Комплекс «СІЕЛЬ»',
+                archangel: 'Центральне Ядро СІЕЛЬ',
+                beaconTitle: 'Головна Будівля Вавилонії',
+                color: '#22d3ee',
+                desc: 'Центральне високотехнологічне ядро, Головна Будівля Вавилонії.',
+                features: 'Ізольований куполом/Бар\'єром; головний хаб мережі ШІ.',
+                palette: {
+                    low:  [48, 86, 102],
+                    mid:  [78, 134, 148],
+                    high: [195, 232, 240]
+                }
+            },
+            1: {
+                id: 1,
+                code: 'СЕКТОР I',
+                shortName: 'Пн • Карантинні Сади',
+                name: 'Карантинні Сади',
+                archangel: 'Маяк Архангела I',
+                beaconTitle: 'Маяк Архангела I',
+                color: '#10b981',
+                desc: 'Зарослі оранжереї, паркові руїни, біолюмінесцентна флора.',
+                features: 'Стартова безпечна зона; мінімальний рівень загроз.',
+                palette: {
+                    low:  [28, 88, 64],
+                    mid:  [42, 128, 88],
+                    high: [98, 186, 132]
+                }
+            },
+            2: {
+                id: 2,
+                code: 'СЕКТОР II',
+                shortName: 'Пн-Сх • Іржаві Пустки',
+                name: 'Іржаві Пустки (Механічний Некрополь)',
+                archangel: 'Маяк Архангела II',
+                beaconTitle: 'Маяк Архангела II',
+                color: '#f97316',
+                desc: 'Індустріальна пустеля, понівечені заводи, звалища техніки.',
+                features: 'Механічні загрози, дефіцит органіки, видобуток металу й деталей.',
+                palette: {
+                    low:  [92, 54, 38],
+                    mid:  [136, 78, 48],
+                    high: [184, 116, 74]
+                }
+            },
+            3: {
+                id: 3,
+                code: 'СЕКТОР III',
+                shortName: 'Сх • Кристалічні Солончаки',
+                name: 'Кристалічні Солончаки',
+                archangel: 'Маяк Архангела III',
+                beaconTitle: 'Маяк Архангела III',
+                color: '#e2e8f0',
+                desc: 'Висохлі білі рівнини, каньйони з наростами енергокристалів.',
+                features: 'Висока концентрація енергетичних ресурсів, світлові/енергетичні поля.',
+                palette: {
+                    low:  [128, 138, 152],
+                    mid:  [176, 188, 204],
+                    high: [228, 236, 245]
+                }
+            },
+            4: {
+                id: 4,
+                code: 'СЕКТОР IV',
+                shortName: 'Пд-Сх • Затока Застиглого Припливу',
+                name: 'Затока Застиглого Припливу',
+                archangel: 'Маяк Архангела IV',
+                beaconTitle: 'Маяк Архангела IV',
+                color: '#38bdf8',
+                desc: 'Прибережна зона, оголене морське дно, аномально застиглі хвилі.',
+                features: 'Динамічна зміна рівня води (припливи/відпливи), що відкриває нові шляхи.',
+                palette: {
+                    low:  [34, 78, 108],
+                    mid:  [62, 122, 156],
+                    high: [132, 194, 224]
+                }
+            },
+            5: {
+                id: 5,
+                code: 'СЕКТОР V',
+                shortName: 'Пд • Примарний Мегаполіс',
+                name: 'Примарний Мегаполіс',
+                archangel: 'Маяк Архангела V',
+                beaconTitle: 'Маяк Архангела V',
+                color: '#a855f7',
+                desc: 'Напівзруйновані хмарочоси та житлові квартали Вавилонії.',
+                features: 'Інформаційний туман, голографічні «ехо» минулого, міський вертикальний левел-дизайн.',
+                palette: {
+                    low:  [58, 56, 78],
+                    mid:  [88, 84, 118],
+                    high: [142, 136, 178]
+                }
+            },
+            6: {
+                id: 6,
+                code: 'СЕКТОР VI',
+                shortName: 'Пд-Зх • Грозові Топи',
+                name: 'Грозові Топи',
+                archangel: 'Маяк Архангела VI',
+                beaconTitle: 'Маяк Архангела VI',
+                color: '#6366f1',
+                desc: 'Темні болота, затоплені низини, постійний грозовий фронт.',
+                features: 'Гравітаційні та електромагнітні аномалії, ускладнене пересування.',
+                palette: {
+                    low:  [36, 46, 68],
+                    mid:  [58, 72, 104],
+                    high: [98, 118, 158]
+                }
+            },
+            7: {
+                id: 7,
+                code: 'СЕКТОР VII',
+                shortName: 'Зх • Ліс Великих Дерев',
+                name: 'Ліс Великих Дерев',
+                archangel: 'Маяк Архангела VII',
+                beaconTitle: 'Маяк Архангела VII',
+                color: '#84cc16',
+                desc: 'Гігантська реліктова флора, що пробиває хмари.',
+                features: 'Дворівнева вертикальна екосистема: сонячний ярус крон і темне небезпечне коріння внизу.',
+                palette: {
+                    low:  [34, 62, 36],
+                    mid:  [58, 98, 48],
+                    high: [112, 158, 72]
+                }
+            },
+            8: {
+                id: 8,
+                code: 'СЕКТОР VIII',
+                shortName: 'Пн-Зх • Токсичні Джунглі',
+                name: 'Токсичні Джунглі',
+                archangel: 'Маяк Архангела VIII',
+                beaconTitle: 'Маяк Архангела VIII',
+                color: '#f43f5e',
+                desc: 'Густі мутовані хащі, отруйні випари, біомаса.',
+                features: 'Епіцентр прориву Бар\'єру; максимальна концентрація Скверни та агресивної фауни.',
+                palette: {
+                    low:  [74, 34, 52],
+                    mid:  [118, 44, 68],
+                    high: [176, 78, 98]
+                }
+            }
+        };
+
+        /***********************************************************************
+         * 2. FAST DETERMINISTIC NOISE FOR TERRAIN (#317)
+         ***********************************************************************/
+        class FastNoise2D {
+            constructor(seed = 317) {
+                this.perm = new Uint8Array(512);
+                this.reseed(seed);
+            }
+            reseed(seed) {
+                const p = new Uint8Array(256);
+                for (let i = 0; i < 256; i++) p[i] = i;
+                let s = (seed * 1664525 + 1013904223) >>> 0;
+                for (let i = 255; i > 0; i--) {
+                    s = (s * 1664525 + 1013904223) >>> 0;
+                    const j = s % (i + 1);
+                    const tmp = p[i];
+                    p[i] = p[j];
+                    p[j] = tmp;
+                }
+                for (let i = 0; i < 512; i++) this.perm[i] = p[i & 255];
+            }
+            fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+            lerp(a, b, t) { return a + t * (b - a); }
+            grad(hash, x, y) {
+                const h = hash & 7;
+                const u = h < 4 ? x : y;
+                const v = h < 4 ? y : x;
+                return ((h & 1) ? -u : u) + ((h & 2) ? -2.0 * v : 2.0 * v);
+            }
+            noise(x, y) {
+                const X = Math.floor(x) & 255;
+                const Y = Math.floor(y) & 255;
+                x -= Math.floor(x);
+                y -= Math.floor(y);
+                const u = this.fade(x);
+                const v = this.fade(y);
+                const A = this.perm[X] + Y;
+                const B = this.perm[X + 1] + Y;
+                const res = this.lerp(
+                    this.lerp(this.grad(this.perm[A], x, y), this.grad(this.perm[B], x - 1, y), u),
+                    this.lerp(this.grad(this.perm[A + 1], x, y - 1), this.grad(this.perm[B + 1], x - 1, y - 1), u),
+                    v
+                );
+                return res * 0.45;
+            }
+            fbm(x, y, octaves = 5, persistence = 0.52, lacunarity = 2.05) {
+                let total = 0, frequency = 1, amplitude = 1, maxValue = 0;
+                for (let i = 0; i < octaves; i++) {
+                    total += this.noise(x * frequency, y * frequency) * amplitude;
+                    maxValue += amplitude;
+                    amplitude *= persistence;
+                    frequency *= lacunarity;
+                }
+                return total / maxValue;
+            }
+        }
+
+        /***********************************************************************
+         * 3. USER'S LOCKED BASE MAP DATA (MARKERS + 33 RUIN COMPLEXES)
+         ***********************************************************************/
+        const STORAGE_KEY = 'ENTROPY_ARK_MAP_V4_CANON_BIOMES';
+
+        const USER_BASE_MARKERS = [
+            {
+                "id": "m_ciel_1792183459827",
+                "x": 0,
+                "y": 0,
+                "category": "ciel",
+                "title": "СІЕЛЬ (Центральне Ядро)",
+                "notes": "Центральне високотехнологічне ядро, Головна Будівля Вавилонії. Ізольований куполом/Бар'єром; головний хаб мережі ШІ."
+            },
+            {
+                "id": "m_beacon_0_1792183459827",
+                "x": 0,
+                "y": -0.65,
+                "category": "beacon",
+                "title": "Маяк Архангела I",
+                "notes": "Периметральний стабілізатор реальності Сектора I (Карантинні Сади)."
+            },
+            {
+                "id": "m_beacon_1_1792183459827",
+                "x": 0.45961940777125593,
+                "y": -0.4596194077712559,
+                "category": "beacon",
+                "title": "Маяк Архангела II",
+                "notes": "Периметральний стабілізатор реальності Сектора II (Іржаві Пустки / Механічний Некрополь)."
+            },
+            {
+                "id": "m_beacon_2_1792183459827",
+                "x": 0.65,
+                "y": 0,
+                "category": "beacon",
+                "title": "Маяк Архангела III",
+                "notes": "Периметральний стабілізатор реальності Сектора III (Кристалічні Солончаки)."
+            },
+            {
+                "id": "m_beacon_3_1792183459827",
+                "x": 0.45961940777125593,
+                "y": 0.4596194077712559,
+                "category": "beacon",
+                "title": "Маяк Архангела IV",
+                "notes": "Периметральний стабілізатор реальності Сектора IV (Затока Застиглого Припливу)."
+            },
+            {
+                "id": "m_beacon_4_1792183459827",
+                "x": 0,
+                "y": 0.65,
+                "category": "beacon",
+                "title": "Маяк Архангела V",
+                "notes": "Периметральний стабілізатор реальності Сектора V (Примарний Мегаполіс)."
+            },
+            {
+                "id": "m_beacon_5_1792183459827",
+                "x": -0.4596194077712559,
+                "y": 0.45961940777125593,
+                "category": "beacon",
+                "title": "Маяк Архангела VI",
+                "notes": "Периметральний стабілізатор реальності Сектора VI (Грозові Топи)."
+            },
+            {
+                "id": "m_beacon_6_1792183459827",
+                "x": -0.65,
+                "y": 0,
+                "category": "beacon",
+                "title": "Маяк Архангела VII",
+                "notes": "Периметральний стабілізатор реальності Сектора VII (Ліс Великих Дерев)."
+            },
+            {
+                "id": "m_beacon_7_1792183459827",
+                "x": -0.459619407771256,
+                "y": -0.4596194077712559,
+                "category": "beacon",
+                "title": "Маяк Архангела VIII",
+                "notes": "Периметральний стабілізатор реальності Сектора VIII (Токсичні Джунглі)."
+            },
+            {
+                "id": "m_1792184642242_224",
+                "x": 0.026365355155443023,
+                "y": -0.47846574832376204,
+                "category": "metro",
+                "title": "вагон метро ( точка початку )",
+                "notes": "Стартовий мобільний хаб групи дослідників у Карантинних Садах (Сектор I)."
+            }
+        ];
+
+        const USER_SAVED_RUIN_SEEDS = [
+            { id: "ruin_1792186416451_9916", seed: 619104, x: 0.31266928589131704, y: -0.5613267445153668, type: "bastion", title: "Казарми вартових «B-52»", badge: "БАСТІОН", rotation: -2.6060413301389476, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_5244", seed: 915598, x: 0.12201042946145281, y: 0.47538243820438103, type: "lab_dome", title: "Сектор генетики «G-48»", badge: "ЛАБОРАТОРІЯ", rotation: -1.112308765770511, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_4660", seed: 315415, x: -0.22413251079485036, y: 0.2432834518499879, type: "bastion", title: "Артилерійський двір «C-72»", badge: "БАСТІОН", rotation: 0.08812354013916639, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_2993", seed: 168212, x: -0.602039358896222, y: -0.06248465477838844, type: "sanctum", title: "Зал мнемоніки «E-85»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: -0.3034020705997821, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_7745", seed: 218998, x: 0.45286686344208854, y: 0.09841686187191166, type: "bastion", title: "Артилерійський двір «Σ-58»", badge: "БАСТІОН", rotation: 2.5223435502133156, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_1495", seed: 845755, x: -0.4115820208954352, y: 0.4136956496827196, type: "hab_block", title: "Житловий сектор «C-15»", badge: "КВАРТАЛ-ПРИМАРА", rotation: 2.674601653014447, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_1945", seed: 415182, x: -0.4685078054295777, y: 0.3515575956644109, type: "lab_dome", title: "Дослідницький купол «Σ-62»", badge: "ЛАБОРАТОРІЯ", rotation: 2.662816478594628, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_7098", seed: 826661, x: 0.5151329846064834, y: -0.21602307131176754, type: "bastion", title: "Периметральний форт «B-72»", badge: "БАСТІОН", rotation: 2.315442390875262, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_7047", seed: 548984, x: -0.46499356867276137, y: 0.23740774893259464, type: "sanctum", title: "Святилище Коду «C-19»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: -0.04452361915888015, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_658", seed: 252904, x: 0.35490068830665034, y: -0.4390537762639099, type: "sanctum", title: "Релейний санктуарій «E-96»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: 1.0659505771201623, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_1435", seed: 550433, x: -0.42821627672177287, y: 0.07294259515213436, type: "sanctum", title: "Релейний санктуарій «G-97»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: 1.7222756656373832, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_2737", seed: 216495, x: 0.05000828938543322, y: 0.6072937848443245, type: "lab_dome", title: "Сектор генетики «Ω-13»", badge: "ЛАБОРАТОРІЯ", rotation: 3.0003394164083446, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_4254", seed: 629867, x: 0.16450825044984013, y: -0.4280796822515353, type: "industrial", title: "Конвеєрний ангар «E-44»", badge: "ПРОМЗОНА", rotation: -2.925815818121345, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_586", seed: 878404, x: -0.22821728110769388, y: -0.6648643467825333, type: "bastion", title: "Артилерійський двір «Δ-33»", badge: "БАСТІОН", rotation: 0.6890335726940185, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_2373", seed: 109439, x: 0.1962174112543295, y: 0.4016507531862155, type: "lab_dome", title: "Кріо-лабораторія «Ω-92»", badge: "ЛАБОРАТОРІЯ", rotation: -0.22571966937596127, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_3494", seed: 465737, x: -0.4566978898076876, y: -0.22742971681042534, type: "bastion", title: "Артилерійський двір «Ω-14»", badge: "БАСТІОН", rotation: -2.840660222774707, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_2154", seed: 852260, x: 0.6081016196341461, y: -0.20493572067817203, type: "industrial", title: "Синтезаторний завод «K-55»", badge: "ПРОМЗОНА", rotation: 2.057248070148293, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_31", seed: 214643, x: 0.36960859126936607, y: 0.019723022582500933, type: "bastion", title: "Периметральний форт «G-37»", badge: "БАСТІОН", rotation: 0.3473256124658915, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_725", seed: 140672, x: 0.21009146340480134, y: -0.03806827728094427, type: "hab_block", title: "Спальний блок «K-22»", badge: "КВАРТАЛ-ПРИМАРА", rotation: -1.5872746360397618, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416451_2969", seed: 297673, x: 0.6608316964139394, y: 0.3335899521880149, type: "industrial", title: "Ливарний цех «Ω-49»", badge: "ПРОМЗОНА", rotation: 0.8422328350639379, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_5452", seed: 828287, x: 0.20225694673200115, y: 0.12242035993378243, type: "sanctum", title: "Вузол синхронізації «E-50»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: -2.3532875666387394, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_5329", seed: 970232, x: -0.28848205358953477, y: 0.3997950924181928, type: "hab_block", title: "Житловий сектор «B-62»", badge: "КВАРТАЛ-ПРИМАРА", rotation: 2.7776338498161484, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_9660", seed: 809312, x: -0.4838630749159587, y: -0.16186147868374387, type: "hab_block", title: "Спальний блок «A-80»", badge: "КВАРТАЛ-ПРИМАРА", rotation: 1.2755170561651945, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_2365", seed: 836707, x: 0.4261707960168439, y: -0.3305419682504939, type: "hab_block", title: "Спальний блок «D-15»", badge: "КВАРТАЛ-ПРИМАРА", rotation: 2.5587990240215572, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_388", seed: 692820, x: 0.23050789790097592, y: -0.5863591255058269, type: "sanctum", title: "Вузол синхронізації «E-61»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: 2.5761351884281045, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_6077", seed: 160409, x: 0.5136183866638941, y: -0.43983363303023926, type: "industrial", title: "Конвеєрний ангар «A-68»", badge: "ПРОМЗОНА", rotation: -1.135201678209347, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_6652", seed: 475918, x: -0.2297442475159153, y: -0.49304061371577884, type: "sanctum", title: "Обеліск пам’яті «Σ-39»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: 0.5063372707282874, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_2455", seed: 918104, x: -0.10481037635482243, y: 0.517176107764921, type: "bastion", title: "Командний бункер «G-35»", badge: "БАСТІОН", rotation: 0.6052443662401049, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186416452_3664", seed: 673419, x: 0.04088901412994331, y: 0.15834932831855122, type: "industrial", title: "Ливарний цех «A-70»", badge: "ПРОМЗОНА", rotation: -2.6198362028993407, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186421282_8494", seed: 472697, x: -0.13096571694646503, y: -0.4829416882435661, type: "sanctum", title: "Релейний санктуарій «Δ-82»", badge: "СЕРВЕРНИЙ ХРАМ", rotation: 2.3262541513084813, radiusWorld: 0.0456, scaleMultiplier: 1 },
+            { id: "ruin_1792186429285_1007", seed: 366377, x: -0.025361042343793664, y: -0.14783418919877447, type: "bastion", title: "Артилерійський двір «Σ-83»", badge: "БАСТІОН", rotation: 0.6644799322449092, radiusWorld: 0.0456, scaleMultiplier: 1.953125 },
+            { id: "ruin_1792186435180_7406", seed: 201894, x: -0.18797325386485642, y: 0.03072039600082385, type: "bastion", title: "Артилерійський двір «Σ-27»", badge: "БАСТІОН", rotation: -2.5208134549358485, radiusWorld: 0.0456, scaleMultiplier: 1.25 },
+            { id: "ruin_1792186449639_3095", seed: 655446, x: -0.22575926306518895, y: -0.2951721330204328, type: "hab_block", title: "Спальний блок «Δ-25»", badge: "КВАРТАЛ-ПРИМАРА", rotation: 0.8831465107570399, radiusWorld: 0.0456, scaleMultiplier: 1.25 }
+        ];
+
+        const RUIN_ARCHETYPES = {
+            hab_block: { name: 'Житловий квартал Вавилонії', loot: 'Побутові записи Вавилонії, уламки Аура-кристалів, старі сервісні дрони.' },
+            lab_dome: { name: 'Обвалена біо-лабораторія', loot: 'Зашифровані носії даних Архангелів, хімічні реагенти, експериментальні Аура-ядра.' },
+            industrial: { name: 'Зруйнований завод-генераторна', loot: 'Деталі для перепрограмування автоматонів, титанові пластини, паливні елементи.' },
+            bastion: { name: 'Розбитий військовий бастіон', loot: 'Бойові автоматони (потребують ремонту), енергетичні щити, тактичні карти.' },
+            sanctum: { name: 'Храм-серверна Архангела', loot: 'Скрижалі з текстом мовою Вавилонії, чисті резонатори, фрагменти пам’яті ШІ.' }
+        };
+
+        function createSeededRandom(seed) {
+            let s = (seed >>> 0) || 1234567;
+            return function () {
+                s = (s * 1664525 + 1013904223) >>> 0;
+                return (s & 0x0fffffff) / 0x10000000;
+            };
+        }
+
+        function reconstructSavedRuinCluster(meta) {
+            const rand = createSeededRandom(meta.seed);
+            const types = ['hab_block', 'lab_dome', 'industrial', 'bastion', 'sanctum'];
+            const _unusedType = types[Math.floor(rand() * types.length)];
+            const _unusedCodeNum = Math.floor(rand() * 89 + 10);
+            const _unusedCodeLetter = Math.floor(rand() * 10);
+            const _unusedPrefix = Math.floor(rand() * 5);
+
+            const destruction = 0.64;
+            const density = 8;
+            const numBuildings = Math.max(2, Math.round(density * (0.7 + rand() * 0.6)));
+
+            const buildings = [];
+            const craters = [];
+            const rubbleChunks = [];
+            const roads = [{ x1: -0.85, y1: 0, x2: 0.85, y2: 0, width: 0.12 }];
+            if (rand() > 0.3) roads.push({ x1: 0, y1: -0.75, x2: 0, y2: 0.75, width: 0.10 });
+
+            for (let i = 0; i < numBuildings; i++) {
+                const angle = (i / numBuildings) * Math.PI * 2 + (rand() - 0.5) * 0.45;
+                const dist = i === 0 && (meta.type === 'lab_dome' || meta.type === 'sanctum') ? 0.05 : 0.22 + rand() * 0.52;
+                const bx = Math.cos(angle) * dist;
+                const by = Math.sin(angle) * dist;
+
+                let shape = 'rect';
+                if (meta.type === 'lab_dome' && (i === 0 || rand() < 0.45)) shape = 'octagon_dome';
+                else if (meta.type === 'industrial' && rand() < 0.45) shape = 'silo_circle';
+                else if (rand() < 0.38) shape = 'l_shape';
+
+                const w = 0.22 + rand() * 0.26;
+                const h = 0.18 + rand() * 0.24;
+                const bRot = (Math.floor(rand() * 4) * (Math.PI / 2)) + (rand() - 0.5) * 0.08 * destruction;
+
+                const wallSegments = [];
+                for (let s = 0; s < 8; s++) wallSegments.push(rand() > (destruction * 0.62));
+                wallSegments[0] = true; wallSegments[2] = true; wallSegments[5] = true;
+
+                const roofIntactRatio = Math.max(0, Math.min(0.85, (1 - destruction) * (0.4 + rand() * 0.8)));
+                const hasInnerRooms = rand() > 0.25;
+                const collapseCorner = Math.floor(rand() * 4);
+
+                buildings.push({ shape, x: bx, y: by, w, h, rot: bRot, wallSegments, roofIntactRatio, hasInnerRooms, collapseCorner });
+
+                const numRubble = Math.floor(4 + destruction * 10);
+                for (let r = 0; r < numRubble; r++) {
+                    const rAngle = rand() * Math.PI * 2;
+                    const rDist = (Math.max(w, h) * 0.45) + rand() * 0.18;
+                    rubbleChunks.push({
+                        x: bx + Math.cos(rAngle) * rDist,
+                        y: by + Math.sin(rAngle) * rDist,
+                        w: 0.03 + rand() * 0.055,
+                        h: 0.025 + rand() * 0.045,
+                        rot: rand() * Math.PI,
+                        dark: rand() > 0.5
+                    });
+                }
+            }
+
+            const numCraters = Math.max(1, Math.round(destruction * 4));
+            for (let c = 0; c < numCraters; c++) {
+                const ca = rand() * Math.PI * 2;
+                const cd = rand() * 0.55;
+                craters.push({ x: Math.cos(ca) * cd, y: Math.sin(ca) * cd, r: 0.10 + rand() * 0.14 });
+            }
+
+            const arch = RUIN_ARCHETYPES[meta.type] || RUIN_ARCHETYPES.hab_block;
+            return {
+                ...meta,
+                notes: `Тип: ${arch.name}\nСтан конструкцій: 46% цілісності (${buildings.length} споруд у кварталі).\nЗнахідки: ${arch.loot}`,
+                buildings,
+                craters,
+                rubbleChunks,
+                roads
+            };
+        }
+
+        /***********************************************************************
+         * 4. APPLICATION STATE (LOCKED BASE + UNLOCKED SECTORS + ADMIN MODE)
+         ***********************************************************************/
+        const state = {
+            terrain: {
+                seed: 317,
+                preset: 'inner_bay',
+                islandSize: 87,
+                roughness: 64,
+                octagonBlend: 100,
+                centralPlateau: 100,
+                contourOpacity: 14,
+                showShallows: true,
+                useBiomeDesign: true
+            },
+            overlays: {
+                showSectors: true,
+                showBarrier: true,
+                showCorruptionRing: true,
+                arkDiameterKm: 300,
+                showCompass: true
+            },
+            ruinConfig: {
+                globalScale: 50,
+                visualStyle: 'ancient_tech',
+                showRuins: true,
+                showRubble: true,
+                showLabels: true
+            },
+            // Visibility of each sector (0 = Center CIEL, 1..8 = Sectors I..VIII)
+            unlockedSectors: {
+                0: true,
+                1: true,
+                2: true,
+                3: true,
+                4: true,
+                5: true,
+                6: true,
+                7: true,
+                8: true
+            },
+            // Admin & Character Identity state (synced with character_sheet)
+            admin: {
+                isAdmin: false,
+                role: 'player', // 'gm' | 'player'
+                characterName: '',
+                pin: 'ентропія'
+            },
+            // Active group sector transfer command from Master
+            groupTransfer: null, // { sectorId: number, timestamp: number, by: string }
+            // Visual denial pulse on locked sector click
+            deniedPulse: null, // { secId: number, alpha: number, x: number, y: number }
+            // Detailed Sector Mode (null = whole island, 0..8 = focused sector)
+            focusedSectorId: null,
+            details: {
+                markers: JSON.parse(JSON.stringify(USER_BASE_MARKERS)),
+                ruinClusters: USER_SAVED_RUIN_SEEDS.map(reconstructSavedRuinCluster)
+            },
+            view: {
+                panX: 0,
+                panY: 0,
+                zoom: 1.0,
+                isDragging: false,
+                dragStartX: 0,
+                dragStartY: 0,
+                hasMoved: false,
+                cursorWorldX: 0,
+                cursorWorldY: 0
+            },
+            editor: {
+                activeTab: 'island',
+                activeTool: 'pan',
+                selectedItem: null
+            }
+        };
+
+        let isApplyingRemoteUpdate = false;
+        let mqttClient = null;
+        const MQTT_TOPIC_STATE = 'entropia_ark_317/map_state_v4';
+        const MQTT_TOPIC_COMMAND = 'entropia_ark_317/group_command_v4';
+        const localBroadcastChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('entropia_ark_sync_channel') : null;
+        let lastHandledTransferTimestamp = Number(sessionStorage.getItem('entropia_last_transfer_ts') || 0);
+
+        let githubSyncConfig = {
+            repo: 'nazarshulik0-dotcom/entropia_map',
+            token: '',
+            lastSha: null
+        };
+
+        /**
+         * Web Audio API synthesizer for Babylon sci-fi feedback (Access Denied / Sector Focus)
+         */
+        function playBabylonSound(type = 'denied') {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                if (!window.__babylonAudioCtx) window.__babylonAudioCtx = new AudioCtx();
+                const actx = window.__babylonAudioCtx;
+                if (actx.state === 'suspended') actx.resume();
+
+                const now = actx.currentTime;
+                const osc = actx.createOscillator();
+                const gain = actx.createGain();
+                osc.connect(gain);
+                gain.connect(actx.destination);
+
+                if (type === 'denied') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(195, now);
+                    osc.frequency.setValueAtTime(138, now + 0.11);
+                    gain.gain.setValueAtTime(0.11, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+                    osc.start(now);
+                    osc.stop(now + 0.33);
+                } else if (type === 'focus') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(520, now);
+                    osc.frequency.exponentialRampToValueAtTime(880, now + 0.14);
+                    gain.gain.setValueAtTime(0.06, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+                    osc.start(now);
+                    osc.stop(now + 0.17);
+                }
+            } catch (e) {}
+        }
+
+        /**
+         * 1. AUTOMATIC ROLE & CHARACTER SYNCHRONIZATION WITH CHARACTER_SHEET
+         * Checks (1) URL params, (2) window.parent / postMessage, (3) shared localStorage/sessionStorage
+         */
+        function normalizeRoleValue(rawRole) {
+            if (!rawRole) return null;
+            const val = String(rawRole).trim().toLowerCase();
+            if (['gm', 'master', 'admin', 'майстер', 'адмін', 'true', '1', 'dm', 'keeper'].includes(val)) {
+                return 'gm';
+            }
+            if (['player', 'гравець', 'user', 'hero', 'false', '0'].includes(val)) {
+                return 'player';
+            }
+            return null;
+        }
+
+        function applyDetectedUserIdentity(role, charName = '', sourceLabel = '') {
+            const normRole = normalizeRoleValue(role) || 'player';
+            const cleanChar = String(charName || '').trim();
+
+            state.admin.role = normRole;
+            if (cleanChar) {
+                state.admin.characterName = cleanChar;
+            }
+
+            // Save to shared storage so regional maps (sector1.html..sector8.html) inherit it automatically
+            try {
+                localStorage.setItem('entropia_user_role', normRole);
+                sessionStorage.setItem('entropia_user_role', normRole);
+                if (cleanChar) {
+                    localStorage.setItem('entropia_char_name', cleanChar);
+                    sessionStorage.setItem('entropia_char_name', cleanChar);
+                }
+            } catch (e) {}
+
+            const charBadge = document.getElementById('char-name-badge');
+            if (charBadge) {
+                if (state.admin.characterName) {
+                    charBadge.textContent = `👤 ${state.admin.characterName}`;
+                    charBadge.classList.remove('hidden');
+                } else if (normRole === 'gm') {
+                    charBadge.textContent = `👑 Архітектор`;
+                    charBadge.classList.remove('hidden');
+                } else {
+                    charBadge.classList.add('hidden');
+                }
+            }
+
+            if (normRole === 'gm') {
+                setAdminMode(true);
+            } else {
+                setAdminMode(false);
+            }
+        }
+
+        function detectIdentityFromStorageAndParent() {
+            let detectedRole = 'player';
+            let detectedChar = '';
+
+            // За замовчуванням завжди стартуємо у безпечному Режимі Гравця,
+            // але якщо явно передано ?role=gm у посиланні або повідомлення від character_sheet — підхоплюємо
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const urlRole = params.get('role') || params.get('mode') || (params.get('gm') === '1' ? 'gm' : null);
+                const urlChar = params.get('char') || params.get('character') || params.get('name') || params.get('user');
+                if (urlChar) detectedChar = urlChar;
+                if (urlRole) {
+                    detectedRole = normalizeRoleValue(urlRole) || 'player';
+                }
+            } catch (e) {}
+
+            // Якщо ім'я персонажа збережене у спільному localStorage — зчитуємо його
+            if (!detectedChar) {
+                try {
+                    const savedChar = localStorage.getItem('entropia_char_name') || sessionStorage.getItem('entropia_char_name');
+                    if (savedChar && savedChar.trim() !== '') {
+                        detectedChar = savedChar.trim();
+                    }
+                } catch (e) {}
+            }
+
+            // Якщо відкрито всередині iframe Листа Персонажів — надсилаємо безпечний запит контексту
+            if (window.parent && window.parent !== window) {
+                try {
+                    window.parent.postMessage({ type: 'ENTROPIA_MAP_READY', action: 'REQUEST_USER_ROLE' }, '*');
+                } catch (e) {}
+            }
+
+            applyDetectedUserIdentity(detectedRole, detectedChar, 'init');
+        }
+
+        // Listen for postMessage from parent character_sheet
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data || typeof data !== 'object') return;
+
+            if (
+                data.type === 'ENTROPIA_USER_CONTEXT' ||
+                data.type === 'CHARACTER_SHEET_AUTH' ||
+                data.type === 'SET_ROLE' ||
+                data.role !== undefined ||
+                data.isGM !== undefined ||
+                data.isMaster !== undefined
+            ) {
+                const incomingRole = (data.isGM || data.isMaster || data.isAdmin) ? 'gm' : (data.role || 'player');
+                const incomingChar = data.char || data.characterName || data.charName || data.name || data.user || state.admin.characterName;
+                applyDetectedUserIdentity(incomingRole, incomingChar, 'postMessage');
+            }
+        });
+
+        // Listen for shared localStorage changes across tabs/iframes
+        window.addEventListener('storage', (event) => {
+            if (!event.key) return;
+            if (event.key === STORAGE_KEY && event.newValue) {
+                try {
+                    applyRemoteMapData(JSON.parse(event.newValue));
+                } catch (e) {}
+            } else if (['entropia_user_role', 'entropia_char_name', 'role', 'userRole', 'activeCharacter', 'currentUser', 'isGM'].includes(event.key)) {
+                detectIdentityFromStorageAndParent();
+            }
+        });
+
+        function setCloudBadgeStatus(statusText, colorClass = 'bg-emerald-400') {
+            const dot = document.getElementById('cloud-sync-dot');
+            const txt = document.getElementById('cloud-sync-text');
+            if (dot) dot.className = `w-1.5 h-1.5 rounded-full ${colorClass}`;
+            if (txt) txt.textContent = statusText;
+        }
+
+        function buildExportableMapPayload() {
+            return {
+                project: 'ЕНТРОПІЯ — Ковчег Вавилонії (v4 Biomes & Sector Nav)',
+                exportedAt: new Date().toISOString(),
+                updatedAt: Date.now(),
+                unlockedSectors: state.unlockedSectors,
+                markers: state.details.markers,
+                useBiomeDesign: state.terrain.useBiomeDesign,
+                showSectors: state.overlays.showSectors,
+                showLabels: state.ruinConfig.showLabels,
+                adminPin: state.admin.pin,
+                githubRepo: githubSyncConfig.repo,
+                groupTransfer: state.groupTransfer
+            };
+        }
+
+        function applyRemoteMapData(parsed) {
+            if (!parsed) return;
+            isApplyingRemoteUpdate = true;
+
+            const prevBiome = state.terrain.useBiomeDesign;
+
+            if (parsed.unlockedSectors) {
+                let unlockedObj = parsed.unlockedSectors;
+                if (typeof unlockedObj === 'string') {
+                    try { unlockedObj = JSON.parse(unlockedObj); } catch (e) {}
+                }
+                for (let i = 0; i <= 8; i++) {
+                    if (typeof unlockedObj[i] === 'boolean') {
+                        state.unlockedSectors[i] = unlockedObj[i];
+                    }
+                }
+            }
+
+            if (Array.isArray(parsed.markers) && parsed.markers.length > 0) {
+                state.details.markers = parsed.markers;
+            } else if (parsed.details && Array.isArray(parsed.details.markers) && parsed.details.markers.length > 0) {
+                state.details.markers = parsed.details.markers;
+            }
+
+            if (typeof parsed.useBiomeDesign === 'boolean') {
+                state.terrain.useBiomeDesign = parsed.useBiomeDesign;
+            }
+            if (typeof parsed.showSectors === 'boolean') {
+                state.overlays.showSectors = parsed.showSectors;
+                state.overlays.showBarrier = parsed.showSectors;
+            }
+            if (typeof parsed.showLabels === 'boolean') {
+                state.ruinConfig.showLabels = parsed.showLabels;
+            }
+            if (parsed.groupTransfer && typeof parsed.groupTransfer.sectorId === 'number') {
+                handleIncomingGroupTransfer(parsed.groupTransfer, false);
+            }
+
+            state.admin.pin = 'ентропія';
+
+            if (state.focusedSectorId !== null) {
+                updateSectorFocusBanner(state.focusedSectorId);
+                renderSectorDossier(state.focusedSectorId);
+            }
+
+            syncUIFromState();
+            if (prevBiome !== state.terrain.useBiomeDesign) {
+                rebuildIslandTerrain();
+            } else {
+                renderMap();
+            }
+
+            isApplyingRemoteUpdate = false;
+        }
+
+        /***********************************************************************
+         * 5. SECTOR GEOMETRY & BIOME COLOR BLENDING ENGINE (EXACT FROM FILE)
+         ***********************************************************************/
+        const MAP_RES = 540;
+        const heightmap = new Float32Array(MAP_RES * MAP_RES);
+        const terrainCanvas = document.createElement('canvas');
+        terrainCanvas.width = MAP_RES;
+        terrainCanvas.height = MAP_RES;
+        const terrainCtx = terrainCanvas.getContext('2d');
+        const noiseGen = new FastNoise2D(state.terrain.seed);
+
+        function computeOctagonDistance(nx, ny) {
+            const ax = Math.abs(nx);
+            const ay = Math.abs(ny);
+            const diag = (ax + ay) * 0.70710678;
+            return Math.max(ax, ay, diag);
+        }
+
+        function getSectorIdAtPoint(nx, ny) {
+            const dist = Math.hypot(nx, ny);
+            if (dist <= 0.25) return 0; // Sector 0: Central Plateau of CIEL
+
+            let angle = Math.atan2(ny, nx) + Math.PI / 2 + Math.PI / 8;
+            while (angle < 0) angle += Math.PI * 2;
+            while (angle >= Math.PI * 2) angle -= Math.PI * 2;
+            const idx = Math.floor((angle / (Math.PI * 2)) * 8) % 8;
+            return idx + 1; // 1..8
+        }
+
+        function getBiomeBlendedColor(nx, ny, h) {
+            const dist = Math.hypot(nx, ny);
+            const secId = getSectorIdAtPoint(nx, ny);
+            const primaryBiome = ARK_BIOMES[secId] || ARK_BIOMES[0];
+
+            let baseRGB;
+            if (h < 0.022) {
+                const p = primaryBiome.palette.low;
+                baseRGB = [
+                    p[0] * 0.45 + 95,
+                    p[1] * 0.45 + 88,
+                    p[2] * 0.45 + 68
+                ];
+            } else if (h < 0.24) {
+                const t = (h - 0.022) / 0.218;
+                const p1 = primaryBiome.palette.low;
+                const p2 = primaryBiome.palette.mid;
+                baseRGB = [
+                    p1[0] + (p2[0] - p1[0]) * t,
+                    p1[1] + (p2[1] - p1[1]) * t,
+                    p1[2] + (p2[2] - p1[2]) * t
+                ];
+            } else {
+                const t = Math.min(1, (h - 0.24) / 0.35);
+                const p2 = primaryBiome.palette.mid;
+                const p3 = primaryBiome.palette.high;
+                baseRGB = [
+                    p2[0] + (p3[0] - p2[0]) * t,
+                    p2[1] + (p3[1] - p2[1]) * t,
+                    p2[2] + (p3[2] - p2[2]) * t
+                ];
+            }
+
+            const tex = noiseGen.noise(nx * 18, ny * 18) * 18;
+            baseRGB[0] += tex;
+            baseRGB[1] += tex;
+            baseRGB[2] += tex;
+
+            if (dist > 0.21 && dist < 0.28) {
+                const centerPal = ARK_BIOMES[0].palette.mid;
+                const blend = 1 - Math.abs(dist - 0.245) / 0.035;
+                baseRGB[0] = baseRGB[0] * (1 - blend * 0.4) + centerPal[0] * (blend * 0.4);
+                baseRGB[1] = baseRGB[1] * (1 - blend * 0.4) + centerPal[1] * (blend * 0.4);
+                baseRGB[2] = baseRGB[2] * (1 - blend * 0.4) + centerPal[2] * (blend * 0.4);
+            }
+
+            return baseRGB;
+        }
+
+        function sampleIslandElevation(nx, ny) {
+            const t = state.terrain;
+            const radiusScale = (t.islandSize / 100) * 0.92;
+            const roughFactor = (t.roughness / 100);
+            const octBlend = (t.octagonBlend / 100);
+
+            const euclidDist = Math.hypot(nx, ny);
+            const octDist = computeOctagonDistance(nx, ny);
+            const baseDist = euclidDist * (1 - octBlend) + octDist * octBlend;
+
+            const warpX = noiseGen.fbm(nx * 2.1 + 3.4, ny * 2.1 + 1.2, 3) * 0.22 * roughFactor;
+            const warpY = noiseGen.fbm(nx * 2.1 - 2.7, ny * 2.1 + 4.8, 3) * 0.22 * roughFactor;
+
+            const wx = nx + warpX;
+            const wy = ny + warpY;
+
+            const coastlineNoise = noiseGen.fbm(wx * 2.6, wy * 2.6, 5, 0.54, 2.05) * (0.28 + roughFactor * 0.36);
+            const fineDetail = noiseGen.fbm(wx * 7.5, wy * 7.5, 3, 0.5, 2.1) * (0.06 * roughFactor);
+
+            const bayAngle = Math.atan2(wy, wx);
+            const bayFactor = Math.exp(-Math.pow(bayAngle - 0.8, 2) * 1.8) * Math.exp(-Math.pow(euclidDist - 0.35, 2) * 14);
+            const macroModifier = -bayFactor * 0.32;
+
+            const normDist = baseDist / Math.max(0.25, radiusScale);
+            const radialMask = 1.0 - Math.pow(normDist, 2.15);
+            let elev = radialMask * 0.62 + coastlineNoise + fineDetail + macroModifier - 0.14;
+
+            if (t.centralPlateau > 0 && euclidDist < 0.32) {
+                const plateauStrength = (t.centralPlateau / 100) * Math.pow(1 - euclidDist / 0.32, 1.6);
+                const targetPlateauHeight = 0.22;
+                elev = elev * (1 - plateauStrength * 0.75) + targetPlateauHeight * (plateauStrength * 0.75);
+            }
+
+            return Math.max(-1.0, Math.min(1.0, elev));
+        }
+
+        function getHeightAtNorm(nx, ny) {
+            const px = Math.floor(((nx + 1) * 0.5) * (MAP_RES - 1));
+            const py = Math.floor(((ny + 1) * 0.5) * (MAP_RES - 1));
+            if (px < 0 || px >= MAP_RES || py < 0 || py >= MAP_RES) return -0.8;
+            return heightmap[py * MAP_RES + px];
+        }
+
+        function rebuildIslandTerrain() {
+            noiseGen.reseed(state.terrain.seed);
+
+            for (let y = 0; y < MAP_RES; y++) {
+                const ny = (y / (MAP_RES - 1)) * 2 - 1;
+                for (let x = 0; x < MAP_RES; x++) {
+                    const nx = (x / (MAP_RES - 1)) * 2 - 1;
+                    heightmap[y * MAP_RES + x] = sampleIslandElevation(nx, ny);
+                }
+            }
+
+            const imgData = terrainCtx.createImageData(MAP_RES, MAP_RES);
+            const data = imgData.data;
+            const contourAlpha = (state.terrain.contourOpacity / 100);
+            const useBiomes = state.terrain.useBiomeDesign;
+
+            for (let y = 0; y < MAP_RES; y++) {
+                const ny = (y / (MAP_RES - 1)) * 2 - 1;
+                for (let x = 0; x < MAP_RES; x++) {
+                    const nx = (x / (MAP_RES - 1)) * 2 - 1;
+                    const idx = y * MAP_RES + x;
+                    const h = heightmap[idx];
+
+                    const hR = x < MAP_RES - 1 ? heightmap[idx + 1] : h;
+                    const hD = y < MAP_RES - 1 ? heightmap[idx + MAP_RES] : h;
+                    const dx = (hR - h) * 38;
+                    const dy = (hD - h) * 38;
+                    const shade = Math.max(-0.35, Math.min(0.35, (-dx * 0.7 - dy * 0.7)));
+
+                    let r = 0, g = 0, b = 0;
+
+                    if (h < 0) {
+                        const depth = Math.min(1, -h * 2.0);
+                        r = 11 + (1 - depth) * 18;
+                        g = 30 + (1 - depth) * 48;
+                        b = 56 + (1 - depth) * 58;
+
+                        if (h > -0.08) {
+                            const sf = (h + 0.08) / 0.08;
+                            if (useBiomes) {
+                                const secId = getSectorIdAtPoint(nx, ny);
+                                const bPal = ARK_BIOMES[secId].palette.low;
+                                r += sf * (bPal[0] * 0.35);
+                                g += sf * (bPal[1] * 0.45);
+                                b += sf * (bPal[2] * 0.45);
+                            } else {
+                                r += sf * 26; g += sf * 64; b += sf * 52;
+                            }
+                        }
+                    } else {
+                        if (useBiomes) {
+                            const rgb = getBiomeBlendedColor(nx, ny, h);
+                            r = rgb[0] + shade * 62;
+                            g = rgb[1] + shade * 62;
+                            b = rgb[2] + shade * 62;
+                        } else {
+                            if (h < 0.025) {
+                                r = 168; g = 158; b = 122;
+                            } else if (h < 0.16) {
+                                const t = (h - 0.025) / 0.135;
+                                r = 74 + t * 18; g = 112 + t * 16; b = 72 - t * 6;
+                            } else {
+                                const t = Math.min(1, (h - 0.16) / 0.35);
+                                r = 92 + t * 58; g = 128 + t * 15; b = 66 + t * 35;
+                            }
+                            r += shade * 65; g += shade * 65; b += shade * 65;
+                        }
+                    }
+
+                    const isCoastline = (h >= 0 && (hR < 0 || hD < 0)) || (h < 0 && (hR >= 0 || hD >= 0));
+                    if (isCoastline) {
+                        r = 28; g = 44; b = 46;
+                    } else if (contourAlpha > 0 && h > 0.01) {
+                        const step = 0.065;
+                        const level1 = Math.floor(h / step);
+                        const levelR = Math.floor(hR / step);
+                        const levelD = Math.floor(hD / step);
+                        if (level1 !== levelR || level1 !== levelD) {
+                            const cStrength = contourAlpha * 0.45;
+                            r = r * (1 - cStrength) + 20 * cStrength;
+                            g = g * (1 - cStrength) + 24 * cStrength;
+                            b = b * (1 - cStrength) + 30 * cStrength;
+                        }
+                    }
+
+                    const pIdx = idx * 4;
+                    data[pIdx]     = Math.max(0, Math.min(255, r));
+                    data[pIdx + 1] = Math.max(0, Math.min(255, g));
+                    data[pIdx + 2] = Math.max(0, Math.min(255, b));
+                    data[pIdx + 3] = 255;
+                }
+            }
+
+            terrainCtx.putImageData(imgData, 0, 0);
+            renderMap();
+        }
+
+        /***********************************************************************
+         * 6. MAIN CANVAS RENDERER (BIOMES, RUINS, FOG OF WAR & SECTOR FOCUS)
+         ***********************************************************************/
+        const canvas = document.getElementById('map-canvas');
+        const ctx = canvas.getContext('2d');
+
+        function getMapBaseRadiusPx() {
+            return Math.min(canvas.width, canvas.height) * 0.44;
+        }
+
+        function worldToScreen(wx, wy) {
+            const baseR = getMapBaseRadiusPx() * state.view.zoom;
+            const cx = canvas.width * 0.5 + state.view.panX;
+            const cy = canvas.height * 0.5 + state.view.panY;
+            return { x: cx + wx * baseR, y: cy + wy * baseR };
+        }
+
+        function screenToWorld(sx, sy) {
+            const baseR = getMapBaseRadiusPx() * state.view.zoom;
+            const cx = canvas.width * 0.5 + state.view.panX;
+            const cy = canvas.height * 0.5 + state.view.panY;
+            return { x: (sx - cx) / baseR, y: (sy - cy) / baseR };
+        }
+
+        function traceSectorWedgePath(ctx, centerScreen, mapRadiusPx, secId) {
+            const innerR = mapRadiusPx * 0.25;
+            const outerR = mapRadiusPx * 0.96;
+
+            ctx.beginPath();
+            if (secId === 0) {
+                ctx.arc(centerScreen.x, centerScreen.y, innerR, 0, Math.PI * 2);
+            } else {
+                const idx = secId - 1;
+                const startAngle = (idx * Math.PI) / 4 - Math.PI / 2 - Math.PI / 8;
+                const endAngle   = startAngle + Math.PI / 4;
+                ctx.arc(centerScreen.x, centerScreen.y, outerR, startAngle, endAngle, false);
+                ctx.arc(centerScreen.x, centerScreen.y, innerR, endAngle, startAngle, true);
+                ctx.closePath();
+            }
+        }
+
+        function renderMap() {
+            if (!canvas.width || !canvas.height) return;
+
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.fillStyle = '#09192e';
+            ctx.fillRect(0, 0, w, h);
+
+            const centerScreen = worldToScreen(0, 0);
+            const mapRadiusPx = getMapBaseRadiusPx() * state.view.zoom;
+
+            // 1. Draw Terrain Canvas
+            ctx.save();
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(
+                terrainCanvas,
+                centerScreen.x - mapRadiusPx,
+                centerScreen.y - mapRadiusPx,
+                mapRadiusPx * 2,
+                mapRadiusPx * 2
+            );
+            ctx.restore();
+
+            // 2. Draw Subtle Biome Characteristic Surface Details on Unlocked Sectors
+            if (state.terrain.useBiomeDesign) {
+                drawBiomeSurfaceAccents(centerScreen, mapRadiusPx);
+            }
+
+            // 3. Draw Destroyed Building Clusters (Only in unlocked sectors!)
+            if (state.ruinConfig.showRuins) {
+                drawDestroyedBuildingClusters(mapRadiusPx);
+            }
+
+            // 4. Draw Fog of War over LOCKED (Unexplored) Sectors
+            drawLockedSectorsFogOfWar(centerScreen, mapRadiusPx);
+
+            // 4b. Draw Red Holo Denial Flash if Player clicked a locked sector
+            drawFogDenialPulse(centerScreen, mapRadiusPx);
+
+            // 5. If in Detailed Sector Mode, dim non-focused sectors
+            if (state.focusedSectorId !== null) {
+                drawDetailedSectorSpotlight(centerScreen, mapRadiusPx, state.focusedSectorId);
+            }
+
+            // 6. Draw 9 Biomes Sector Borders & Labels
+            if (state.overlays.showSectors) {
+                drawBiomeSectorsGuide(centerScreen, mapRadiusPx);
+            }
+
+            // 7. Draw Barrier Dome Ring
+            if (state.overlays.showBarrier) {
+                drawBarrierDome(centerScreen, mapRadiusPx);
+            }
+
+            // 8. Draw Markers (Only in unlocked sectors!)
+            drawUserMarkers();
+
+            // 9. Draw Compass Rose
+            if (state.overlays.showCompass) {
+                drawCompassRose();
+            }
+
+            updateScaleBarHUD(mapRadiusPx);
+        }
+
+        function drawBiomeSurfaceAccents(centerScreen, mapRadiusPx) {
+            ctx.save();
+
+            if (state.unlockedSectors[0]) {
+                ctx.strokeStyle = 'rgba(34, 211, 238, 0.22)';
+                ctx.lineWidth = Math.max(1, 1.5 * state.view.zoom);
+                [0.08, 0.14, 0.20].forEach(rNorm => {
+                    ctx.beginPath();
+                    ctx.arc(centerScreen.x, centerScreen.y, mapRadiusPx * rNorm, 0, Math.PI * 2);
+                    ctx.stroke();
+                });
+            }
+
+            if (state.unlockedSectors[8]) {
+                ctx.strokeStyle = 'rgba(244, 63, 94, 0.35)';
+                ctx.lineWidth = Math.max(1.2, 2.0 * state.view.zoom);
+                const baseAngle = (7 * Math.PI) / 4 - Math.PI / 2;
+                for (let v = -2; v <= 2; v++) {
+                    const a = baseAngle + v * 0.09;
+                    ctx.beginPath();
+                    for (let r = 0.78; r >= 0.30; r -= 0.06) {
+                        const jitter = Math.sin(r * 35 + v * 3) * 0.025;
+                        const p = worldToScreen(Math.cos(a + jitter) * r, Math.sin(a + jitter) * r);
+                        if (r === 0.78) ctx.moveTo(p.x, p.y);
+                        else ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.stroke();
+                }
+            }
+
+            ctx.restore();
+        }
+
+        function drawLockedSectorsFogOfWar(centerScreen, mapRadiusPx) {
+            ctx.save();
+
+            for (let secId = 0; secId <= 8; secId++) {
+                if (state.unlockedSectors[secId]) continue;
+
+                // Якщо Майстер зараз оглядає цей прихований сектор — робимо туман напівпрозорим, щоб Майстер бачив об'єкти всередині
+                const isMasterInspecting = state.admin.isAdmin && state.focusedSectorId === secId;
+
+                traceSectorWedgePath(ctx, centerScreen, mapRadiusPx, secId);
+
+                ctx.fillStyle = isMasterInspecting ? 'rgba(6, 10, 19, 0.35)' : 'rgba(6, 10, 19, 0.96)';
+                ctx.fill();
+
+                ctx.save();
+                ctx.clip();
+                ctx.strokeStyle = isMasterInspecting ? 'rgba(244, 63, 94, 0.16)' : 'rgba(34, 211, 238, 0.08)';
+                ctx.lineWidth = 1;
+                const span = mapRadiusPx * 1.1;
+                const step = Math.max(14, 22 * state.view.zoom);
+                ctx.beginPath();
+                for (let d = -span * 2; d <= span * 2; d += step) {
+                    ctx.moveTo(centerScreen.x + d - span, centerScreen.y - span);
+                    ctx.lineTo(centerScreen.x + d + span, centerScreen.y + span);
+                }
+                ctx.stroke();
+                ctx.restore();
+
+                traceSectorWedgePath(ctx, centerScreen, mapRadiusPx, secId);
+                ctx.strokeStyle = isMasterInspecting ? 'rgba(244, 63, 94, 0.65)' : 'rgba(56, 189, 248, 0.35)';
+                ctx.lineWidth = isMasterInspecting ? 2.2 : 1.5;
+                ctx.stroke();
+
+                let lx = centerScreen.x;
+                let ly = centerScreen.y;
+                if (secId > 0) {
+                    const idx = secId - 1;
+                    const midAngle = (idx * Math.PI) / 4 - Math.PI / 2;
+                    const labelR = mapRadiusPx * 0.54;
+                    lx = centerScreen.x + Math.cos(midAngle) * labelR;
+                    ly = centerScreen.y + Math.sin(midAngle) * labelR;
+                }
+
+                ctx.font = `700 ${Math.max(10, Math.min(14, 11 * state.view.zoom))}px "JetBrains Mono", monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = isMasterInspecting ? 'rgba(251, 113, 133, 0.9)' : 'rgba(148, 163, 184, 0.65)';
+                ctx.fillText(`🔒 ${ARK_BIOMES[secId].code}`, lx, ly - 7);
+                ctx.font = `500 ${Math.max(8, Math.min(11, 9 * state.view.zoom))}px "Inter", sans-serif`;
+                ctx.fillStyle = isMasterInspecting ? 'rgba(253, 164, 175, 0.85)' : 'rgba(100, 116, 139, 0.75)';
+                ctx.fillText(isMasterInspecting ? 'ПРИХОВАНО ДЛЯ ГРАВЦІВ' : 'НЕВІДКРИТИЙ СЕКТОР', lx, ly + 8);
+            }
+
+            ctx.restore();
+        }
+
+        function drawFogDenialPulse(centerScreen, mapRadiusPx) {
+            if (!state.deniedPulse || state.deniedPulse.alpha <= 0) return;
+            const pulse = state.deniedPulse;
+            ctx.save();
+            traceSectorWedgePath(ctx, centerScreen, mapRadiusPx, pulse.secId);
+            ctx.fillStyle = `rgba(244, 63, 94, ${pulse.alpha * 0.38})`;
+            ctx.fill();
+            ctx.strokeStyle = `rgba(244, 63, 94, ${pulse.alpha * 0.95})`;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawDetailedSectorSpotlight(centerScreen, mapRadiusPx, focusedId) {
+            ctx.save();
+            for (let secId = 0; secId <= 8; secId++) {
+                if (secId === focusedId) continue;
+                traceSectorWedgePath(ctx, centerScreen, mapRadiusPx, secId);
+                ctx.fillStyle = 'rgba(4, 7, 14, 0.72)';
+                ctx.fill();
+            }
+
+            const biome = ARK_BIOMES[focusedId];
+            if (biome) {
+                traceSectorWedgePath(ctx, centerScreen, mapRadiusPx, focusedId);
+                ctx.strokeStyle = biome.color;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = biome.color;
+                ctx.shadowBlur = 14;
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        function drawDestroyedBuildingClusters(mapRadiusPx) {
+            const globalScale = (state.ruinConfig.globalScale || 50) / 100;
+            const showRubble = state.ruinConfig.showRubble;
+            const showLabels = state.ruinConfig.showLabels;
+
+            const pal = {
+                plazaFill: 'rgba(15, 25, 38, 0.68)',
+                plazaStroke: 'rgba(34, 211, 238, 0.45)',
+                roadFill: 'rgba(22, 38, 56, 0.72)',
+                craterOuter: 'rgba(10, 18, 30, 0.75)',
+                craterInner: 'rgba(6, 10, 18, 0.90)',
+                floorFill: 'rgba(30, 41, 59, 0.92)',
+                roofFill: 'rgba(51, 65, 85, 0.95)',
+                wallStroke: '#67e8f9',
+                innerWall: 'rgba(56, 189, 248, 0.55)',
+                rubbleLight: '#38bdf8',
+                rubbleDark: '#1e293b',
+                accentGlow: 'rgba(34, 211, 238, 0.35)'
+            };
+
+            ctx.save();
+
+            for (const cluster of state.details.ruinClusters) {
+                const secId = getSectorIdAtPoint(cluster.x, cluster.y);
+                if (!state.unlockedSectors[secId] && !(state.admin.isAdmin && state.focusedSectorId === secId)) continue;
+
+                const screenPos = worldToScreen(cluster.x, cluster.y);
+                const clusterRadiusPx = cluster.radiusWorld * (cluster.scaleMultiplier || 1.0) * globalScale * mapRadiusPx;
+
+                if (
+                    screenPos.x + clusterRadiusPx * 2 < 0 ||
+                    screenPos.x - clusterRadiusPx * 2 > canvas.width ||
+                    screenPos.y + clusterRadiusPx * 2 < 0 ||
+                    screenPos.y - clusterRadiusPx * 2 > canvas.height
+                ) {
+                    continue;
+                }
+
+                const isSelected = state.editor.selectedItem &&
+                                   state.editor.selectedItem.type === 'ruin' &&
+                                   state.editor.selectedItem.id === cluster.id;
+
+                ctx.save();
+                ctx.translate(screenPos.x, screenPos.y);
+                ctx.rotate(cluster.rotation);
+
+                if (isSelected) {
+                    ctx.beginPath();
+                    ctx.arc(0, 0, clusterRadiusPx * 1.18, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#fbbf24';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 4]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                // Foundation Slab
+                ctx.beginPath();
+                const slabSides = 8;
+                for (let s = 0; s < slabSides; s++) {
+                    const a = (s / slabSides) * Math.PI * 2;
+                    const r = clusterRadiusPx * (s % 2 === 0 ? 0.92 : 0.82);
+                    if (s === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+                    else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+                }
+                ctx.closePath();
+                ctx.fillStyle = pal.plazaFill;
+                ctx.fill();
+                ctx.lineWidth = Math.max(0.8, clusterRadiusPx * 0.025);
+                ctx.strokeStyle = pal.plazaStroke;
+                ctx.stroke();
+
+                // Internal Roads
+                if (cluster.roads) {
+                    for (const rd of cluster.roads) {
+                        ctx.beginPath();
+                        ctx.lineWidth = rd.width * clusterRadiusPx;
+                        ctx.strokeStyle = pal.roadFill;
+                        ctx.moveTo(rd.x1 * clusterRadiusPx, rd.y1 * clusterRadiusPx);
+                        ctx.lineTo(rd.x2 * clusterRadiusPx, rd.y2 * clusterRadiusPx);
+                        ctx.stroke();
+                    }
+                }
+
+                // Craters
+                if (showRubble && cluster.craters) {
+                    for (const cr of cluster.craters) {
+                        const cx = cr.x * clusterRadiusPx;
+                        const cy = cr.y * clusterRadiusPx;
+                        const crR = cr.r * clusterRadiusPx;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, crR, 0, Math.PI * 2);
+                        ctx.fillStyle = pal.craterOuter;
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, crR * 0.62, 0, Math.PI * 2);
+                        ctx.fillStyle = pal.craterInner;
+                        ctx.fill();
+                    }
+                }
+
+                // Rubble Chunks
+                if (showRubble && cluster.rubbleChunks && clusterRadiusPx > 6) {
+                    for (const rb of cluster.rubbleChunks) {
+                        const rx = rb.x * clusterRadiusPx;
+                        const ry = rb.y * clusterRadiusPx;
+                        const rw = Math.max(1.3, rb.w * clusterRadiusPx);
+                        const rh = Math.max(1.3, rb.h * clusterRadiusPx);
+                        ctx.save();
+                        ctx.translate(rx, ry);
+                        ctx.rotate(rb.rot);
+                        ctx.fillStyle = rb.dark ? pal.rubbleDark : pal.rubbleLight;
+                        ctx.fillRect(-rw * 0.5, -rh * 0.5, rw, rh);
+                        ctx.restore();
+                    }
+                }
+
+                // Buildings
+                const shadowOffset = Math.max(1.2, clusterRadiusPx * 0.06);
+                for (const b of cluster.buildings) {
+                    const bx = b.x * clusterRadiusPx;
+                    const by = b.y * clusterRadiusPx;
+                    const bw = Math.max(3.5, b.w * clusterRadiusPx);
+                    const bh = Math.max(3.5, b.h * clusterRadiusPx);
+
+                    ctx.save();
+                    ctx.translate(bx, by);
+                    ctx.rotate(b.rot);
+
+                    if (b.shape === 'silo_circle' || b.shape === 'octagon_dome') {
+                        const rad = Math.max(2.5, (bw + bh) * 0.26);
+                        ctx.beginPath();
+                        ctx.arc(shadowOffset, shadowOffset, rad, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                        ctx.fill();
+
+                        ctx.beginPath();
+                        ctx.arc(0, 0, rad, 0, Math.PI * 2);
+                        ctx.fillStyle = pal.floorFill;
+                        ctx.fill();
+
+                        if (b.roofIntactRatio > 0.15) {
+                            ctx.beginPath();
+                            ctx.moveTo(0, 0);
+                            ctx.arc(0, 0, rad * 0.92, 0, Math.PI * 1.3 * b.roofIntactRatio);
+                            ctx.closePath();
+                            ctx.fillStyle = pal.roofFill;
+                            ctx.fill();
+                        }
+
+                        const arcCount = b.wallSegments.length;
+                        ctx.strokeStyle = pal.wallStroke;
+                        ctx.lineWidth = Math.max(1.1, clusterRadiusPx * 0.045);
+                        for (let s = 0; s < arcCount; s++) {
+                            if (!b.wallSegments[s]) continue;
+                            ctx.beginPath();
+                            ctx.arc(0, 0, rad, (s / arcCount) * Math.PI * 2, ((s + 0.78) / arcCount) * Math.PI * 2);
+                            ctx.stroke();
+                        }
+                    } else {
+                        const hw = bw * 0.5;
+                        const hh = bh * 0.5;
+
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.58)';
+                        ctx.fillRect(-hw + shadowOffset, -hh + shadowOffset, bw, bh);
+
+                        ctx.fillStyle = pal.floorFill;
+                        ctx.fillRect(-hw, -hh, bw, bh);
+
+                        if (b.roofIntactRatio > 0.15) {
+                            const roofW = bw * (0.35 + b.roofIntactRatio * 0.55);
+                            const roofH = bh * 0.88;
+                            ctx.fillStyle = pal.roofFill;
+                            ctx.fillRect(-hw + 1, -hh + 1, roofW, roofH);
+                        }
+
+                        ctx.strokeStyle = pal.wallStroke;
+                        ctx.lineWidth = Math.max(1.1, clusterRadiusPx * 0.048);
+                        ctx.beginPath();
+                        if (b.wallSegments[0]) { ctx.moveTo(-hw, -hh); ctx.lineTo(hw * 0.6, -hh); }
+                        if (b.wallSegments[2]) { ctx.moveTo(hw, -hh); ctx.lineTo(hw, hh * 0.7); }
+                        if (b.wallSegments[5]) { ctx.moveTo(hw * 0.4, hh); ctx.lineTo(-hw, hh); }
+                        if (b.wallSegments[6]) { ctx.moveTo(-hw, hh); ctx.lineTo(-hw, -hh * 0.3); }
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+
+                ctx.restore();
+
+                if (showLabels && (state.view.zoom >= 1.35 || isSelected || state.focusedSectorId !== null)) {
+                    ctx.save();
+                    ctx.font = '600 10px "Inter", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'top';
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+                    ctx.shadowBlur = 4;
+                    ctx.fillStyle = isSelected ? '#fbbf24' : '#cbd5e1';
+                    ctx.fillText(cluster.title, screenPos.x, screenPos.y + clusterRadiusPx + 4);
+                    ctx.restore();
+                }
+            }
+
+            ctx.restore();
+        }
+
+        function drawBiomeSectorsGuide(centerScreen, mapRadiusPx) {
+            ctx.save();
+            const innerR = mapRadiusPx * 0.25;
+            const outerR = mapRadiusPx * 0.84;
+
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.35)';
+            ctx.lineWidth = 1.4;
+            ctx.setLineDash([6, 6]);
+
+            ctx.beginPath();
+            ctx.arc(centerScreen.x, centerScreen.y, innerR, 0, Math.PI * 2);
+            ctx.stroke();
+
+            for (let i = 0; i < 8; i++) {
+                const angle = (i * Math.PI) / 4 - Math.PI / 8;
+                ctx.beginPath();
+                ctx.moveTo(centerScreen.x + Math.cos(angle) * innerR, centerScreen.y + Math.sin(angle) * innerR);
+                ctx.lineTo(centerScreen.x + Math.cos(angle) * outerR, centerScreen.y + Math.sin(angle) * outerR);
+                ctx.stroke();
+            }
+
+            ctx.setLineDash([]);
+
+            for (let secId = 1; secId <= 8; secId++) {
+                if (!state.unlockedSectors[secId]) continue;
+                const i = secId - 1;
+                const midAngle = (i * Math.PI) / 4 - Math.PI / 2;
+                const labelR = mapRadiusPx * 0.54;
+                const lx = centerScreen.x + Math.cos(midAngle) * labelR;
+                const ly = centerScreen.y + Math.sin(midAngle) * labelR;
+
+                const biome = ARK_BIOMES[secId];
+                ctx.font = `700 ${Math.max(10, Math.min(14, 11 * state.view.zoom))}px "JetBrains Mono", monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+                ctx.shadowBlur = 5;
+                ctx.fillStyle = biome.color;
+                ctx.fillText(biome.code, lx, ly - 6);
+
+                if (state.view.zoom >= 0.85) {
+                    ctx.font = `600 ${Math.max(9, Math.min(12, 9.5 * state.view.zoom))}px "Inter", sans-serif`;
+                    ctx.fillStyle = 'rgba(226, 232, 240, 0.82)';
+                    ctx.fillText(biome.shortName.split('•')[1]?.trim() || biome.name, lx, ly + 8);
+                }
+            }
+
+            if (state.unlockedSectors[0]) {
+                ctx.font = `700 ${Math.max(10, Math.min(14, 11 * state.view.zoom))}px "JetBrains Mono", monospace`;
+                ctx.textAlign = 'center';
+                ctx.fillStyle = 'rgba(103, 232, 249, 0.85)';
+                ctx.fillText('СЕКТОР 0 • КОМПЛЕКС «СІЕЛЬ»', centerScreen.x, centerScreen.y - innerR + 18);
+            }
+
+            ctx.restore();
+        }
+
+        function drawBarrierDome(centerScreen, mapRadiusPx) {
+            ctx.save();
+            const domeR = mapRadiusPx * 0.86;
+            const octBlend = state.terrain.octagonBlend / 100;
+
+            ctx.beginPath();
+            const steps = 128;
+            for (let i = 0; i <= steps; i++) {
+                const a = (i / steps) * Math.PI * 2;
+                const ux = Math.cos(a);
+                const uy = Math.sin(a);
+                const octD = computeOctagonDistance(ux, uy);
+                const rFactor = (1 - octBlend) * 1.0 + octBlend * (0.94 / octD);
+                const px = centerScreen.x + ux * domeR * rFactor;
+                const py = centerScreen.y + uy * domeR * rFactor;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.45)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            if (state.overlays.showCorruptionRing) {
+                ctx.beginPath();
+                for (let i = 0; i <= steps; i++) {
+                    const a = (i / steps) * Math.PI * 2;
+                    const wave = Math.sin(a * 8 + state.terrain.seed) * 0.025 + Math.cos(a * 13) * 0.015;
+                    const r = domeR * (1.055 + wave);
+                    const px = centerScreen.x + Math.cos(a) * r;
+                    const py = centerScreen.y + Math.sin(a) * r;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.strokeStyle = 'rgba(244, 63, 94, 0.35)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        const MARKER_STYLES = {
+            ciel:       { color: '#22d3ee', badge: 'СІЕЛЬ',   symbol: '❖' },
+            beacon:     { color: '#fbbf24', badge: 'МАЯК',    symbol: '▲' },
+            metro:      { color: '#38bdf8', badge: 'МЕТРО',   symbol: 'M' },
+            ruins:      { color: '#a78bfa', badge: 'РУЇНИ',   symbol: '⬢' },
+            corruption: { color: '#f43f5e', badge: 'СКВЕРНА', symbol: '☣' },
+            camp:       { color: '#34d399', badge: 'ТАБІР',   symbol: '⛺' },
+            nature:     { color: '#a3e635', badge: 'РЕЛЬЄФ',  symbol: '⛰' },
+            note:       { color: '#e2e8f0', badge: 'МІТКА',   symbol: '•' }
+        };
+
+        function drawUserMarkers() {
+            ctx.save();
+            for (const m of state.details.markers) {
+                const secId = getSectorIdAtPoint(m.x, m.y);
+                if (!state.unlockedSectors[secId] && !(state.admin.isAdmin && state.focusedSectorId === secId)) continue;
+
+                const pos = worldToScreen(m.x, m.y);
+                const st = MARKER_STYLES[m.category] || MARKER_STYLES.note;
+                const isSelected = state.editor.selectedItem &&
+                                   state.editor.selectedItem.type === 'marker' &&
+                                   state.editor.selectedItem.id === m.id;
+
+                if (isSelected) {
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 16, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2.2;
+                    ctx.stroke();
+                }
+
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 11, 0, Math.PI * 2);
+                ctx.fillStyle = st.color + '33';
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 7.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#090f1a';
+                ctx.fill();
+                ctx.lineWidth = 2.2;
+                ctx.strokeStyle = st.color;
+                ctx.stroke();
+
+                ctx.font = 'bold 9px "Inter", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = st.color;
+                ctx.fillText(st.symbol, pos.x, pos.y + 0.5);
+
+                if (m.title) {
+                    ctx.font = '600 11px "Inter", sans-serif';
+                    const textWidth = ctx.measureText(m.title).width;
+                    const pillW = textWidth + 12;
+                    const pillH = 18;
+                    const pillX = pos.x - pillW / 2;
+                    const pillY = pos.y + 11;
+
+                    ctx.fillStyle = 'rgba(7, 11, 18, 0.88)';
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                        ctx.roundRect(pillX, pillY, pillW, pillH, 4);
+                    } else {
+                        ctx.rect(pillX, pillY, pillW, pillH);
+                    }
+                    ctx.fill();
+                    ctx.strokeStyle = isSelected ? '#fbbf24' : st.color + '66';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#f8fafc';
+                    ctx.fillText(m.title, pos.x, pillY + pillH / 2 + 0.5);
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawCompassRose() {
+            const cx = canvas.width - 54;
+            const cy = canvas.height - 90;
+            const r = 24;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(10, 16, 28, 0.78)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(0, -r + 4);
+            ctx.lineTo(5, 0);
+            ctx.lineTo(0, -4);
+            ctx.lineTo(-5, 0);
+            ctx.closePath();
+            ctx.fillStyle = '#22d3ee';
+            ctx.fill();
+
+            ctx.font = 'bold 9px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#67e8f9';
+            ctx.fillText('ПН', 0, -r - 5);
+            ctx.restore();
+        }
+
+        function updateScaleBarHUD(mapRadiusPx) {
+            const arkRadiusKm = state.overlays.arkDiameterKm * 0.5;
+            const worldSpanFor96Px = 96 / mapRadiusPx;
+            const kmFor96Px = worldSpanFor96Px * (arkRadiusKm / 0.85);
+            const scaleEl = document.getElementById('scale-bar-label');
+            if (scaleEl) scaleEl.textContent = `${kmFor96Px.toFixed(1)} км`;
+            const zoomEl = document.getElementById('hud-zoom');
+            if (zoomEl) zoomEl.textContent = `${Math.round(state.view.zoom * 100)}%`;
+        }
+
+        /***********************************************************************
+         * 7. TAB 1 (ISLAND FOG OF WAR), TAB 2 (MARKER EDITING), TAB 3 (SECTORS)
+         ***********************************************************************/
+        function switchSidebarTab(tabName) {
+            state.editor.activeTab = tabName;
+            ['island', 'markers', 'sectors'].forEach(t => {
+                const content = document.getElementById(`tab-content-${t}`);
+                const btn = document.getElementById(`tab-btn-${t}`);
+                if (t === tabName) {
+                    content.classList.remove('hidden');
+                    btn.classList.add('tool-btn-active');
+                } else {
+                    content.classList.add('hidden');
+                    btn.classList.remove('tool-btn-active');
+                }
+            });
+        }
+
+        function toggleSectorUnlocked(secId) {
+            state.unlockedSectors[secId] = !state.unlockedSectors[secId];
+            if (state.focusedSectorId === secId) {
+                updateSectorFocusBanner(secId);
+                renderSectorDossier(secId);
+            }
+            syncUIFromState();
+            renderMap();
+            saveStateToLocal();
+            const b = ARK_BIOMES[secId];
+            showToast(state.unlockedSectors[secId] ? `Відкрито: ${b.code} (${b.name})` : `Приховано: ${b.code}`);
+        }
+
+        function setAllSectorsUnlocked(unlocked) {
+            for (let i = 0; i <= 8; i++) state.unlockedSectors[i] = unlocked;
+            if (state.focusedSectorId !== null) {
+                updateSectorFocusBanner(state.focusedSectorId);
+                renderSectorDossier(state.focusedSectorId);
+            }
+            syncUIFromState();
+            renderMap();
+            saveStateToLocal();
+            showToast(unlocked ? 'Усі 9 секторів відкрито на карті' : 'Усі сектори приховано туманом війни');
+        }
+
+        function setOnlyStartSectorUnlocked() {
+            for (let i = 0; i <= 8; i++) state.unlockedSectors[i] = (i === 1);
+            if (state.focusedSectorId !== null) {
+                updateSectorFocusBanner(state.focusedSectorId);
+                renderSectorDossier(state.focusedSectorId);
+            }
+            syncUIFromState();
+            renderMap();
+            saveStateToLocal();
+            showToast('Відкрито лише стартовий Сектор I (де стоїть Вагон Метро)');
+        }
+
+        function toggleBiomeDisplayOptions() {
+            const prevBiome = state.terrain.useBiomeDesign;
+            state.terrain.useBiomeDesign = document.getElementById('toggle-biome-colors').checked;
+            state.overlays.showSectors = document.getElementById('toggle-sector-borders').checked;
+            state.overlays.showBarrier = document.getElementById('toggle-sector-borders').checked;
+            state.ruinConfig.showLabels = document.getElementById('toggle-ruin-titles').checked;
+
+            if (prevBiome !== state.terrain.useBiomeDesign) {
+                rebuildIslandTerrain();
+            } else {
+                renderMap();
+            }
+            saveStateToLocal();
+        }
+
+        function getSectorFileName(secId) {
+            return `sector${secId}.html`;
+        }
+
+        function buildSectorNavigationUrl(secId, forceRole = null) {
+            const fileName = getSectorFileName(secId);
+            const activeRole = forceRole || (state.admin.isAdmin ? 'gm' : (state.admin.role || 'player'));
+            const params = new URLSearchParams();
+            params.set('role', activeRole);
+            if (state.admin.characterName) {
+                params.set('char', state.admin.characterName);
+            }
+            params.set('sector', String(secId));
+            return `${fileName}?${params.toString()}`;
+        }
+
+        function updateSectorFocusBanner(secId) {
+            const b = ARK_BIOMES[secId];
+            if (!b) return;
+
+            const isLockedForPlayers = !state.unlockedSectors[secId];
+            const sectorMarkers = state.details.markers.filter(m => getSectorIdAtPoint(m.x, m.y) === secId);
+            const sectorRuins = state.details.ruinClusters.filter(r => getSectorIdAtPoint(r.x, r.y) === secId);
+
+            document.getElementById('sector-focus-banner').classList.remove('hidden');
+            document.getElementById('focus-banner-title').textContent = `${b.code}: ${b.name}`;
+            document.getElementById('focus-banner-desc').textContent = `${b.desc} ${b.features}`;
+            document.getElementById('focus-banner-archangel').textContent = `🗼 ${b.archangel}`;
+            document.getElementById('focus-banner-stats').textContent = `${sectorMarkers.length} міток • ${sectorRuins.length} руїн`;
+            document.getElementById('focus-player-file-badge').textContent = getSectorFileName(secId);
+
+            const fogWarn = document.getElementById('focus-banner-fog-warning');
+            if (fogWarn) {
+                fogWarn.classList.toggle('hidden', !isLockedForPlayers);
+            }
+
+            const playerActions = document.getElementById('focus-player-actions');
+            const masterActions = document.getElementById('focus-master-actions');
+            if (state.admin.isAdmin) {
+                playerActions.classList.add('hidden');
+                masterActions.classList.remove('hidden');
+            } else {
+                playerActions.classList.remove('hidden');
+                masterActions.classList.add('hidden');
+            }
+
+            document.getElementById('header-focus-sector').textContent = `Огляд: ${b.code}`;
+        }
+
+        function focusDetailedSector(secId) {
+            // Перевірка Туману Війни для Гравців
+            if (!state.unlockedSectors[secId] && !state.admin.isAdmin) {
+                triggerFogOfWarDenial(secId);
+                return;
+            }
+
+            state.focusedSectorId = secId;
+            playBabylonSound('focus');
+
+            let targetWX = 0;
+            let targetWY = 0;
+            let targetZoom = 2.4;
+
+            if (secId === 0) {
+                targetWX = 0;
+                targetWY = 0;
+                targetZoom = 2.6;
+            } else {
+                const idx = secId - 1;
+                const midAngle = (idx * Math.PI) / 4 - Math.PI / 2;
+                targetWX = Math.cos(midAngle) * 0.48;
+                targetWY = Math.sin(midAngle) * 0.48;
+                targetZoom = 2.35;
+            }
+
+            state.view.zoom = targetZoom;
+            const baseR = getMapBaseRadiusPx() * state.view.zoom;
+            state.view.panX = -targetWX * baseR;
+            state.view.panY = -targetWY * baseR;
+
+            updateSectorFocusBanner(secId);
+            renderSectorDossier(secId);
+            syncUIFromState();
+            renderMap();
+        }
+
+        function enterFocusedSectorMap(asGroupTransfer = false) {
+            const secId = state.focusedSectorId;
+            if (secId === null || secId === undefined) return;
+
+            if (!state.unlockedSectors[secId] && !state.admin.isAdmin) {
+                triggerFogOfWarDenial(secId);
+                return;
+            }
+
+            // Зберігаємо поточну роль, ім'я персонажа та обраний сектор перед переходом
+            const currentRole = state.admin.isAdmin ? 'gm' : (state.admin.role || 'player');
+            try {
+                localStorage.setItem('entropia_user_role', currentRole);
+                sessionStorage.setItem('entropia_user_role', currentRole);
+                localStorage.setItem('entropia_active_sector', String(secId));
+                sessionStorage.setItem('entropia_active_sector', String(secId));
+                if (state.admin.characterName) {
+                    localStorage.setItem('entropia_char_name', state.admin.characterName);
+                    sessionStorage.setItem('entropia_char_name', state.admin.characterName);
+                }
+            } catch (e) {}
+
+            // Сповіщаємо батьківський character_sheet про перехід на регіональну карту
+            if (window.parent && window.parent !== window) {
+                try {
+                    window.parent.postMessage({
+                        type: 'ENTROPIA_SECTOR_TRANSITION',
+                        sectorId: secId,
+                        sectorFile: getSectorFileName(secId),
+                        role: currentRole,
+                        char: state.admin.characterName
+                    }, '*');
+                } catch (e) {}
+            }
+
+            const targetUrl = buildSectorNavigationUrl(secId, currentRole);
+            window.location.href = targetUrl;
+        }
+
+        function transferGroupToFocusedSector() {
+            if (!state.admin.isAdmin) return;
+            const secId = state.focusedSectorId;
+            if (secId === null || secId === undefined) return;
+
+            const b = ARK_BIOMES[secId];
+
+            // Якщо сектор був закритий Туманом Війни, автоматично відкриваємо його для групи перед переведенням
+            if (!state.unlockedSectors[secId]) {
+                state.unlockedSectors[secId] = true;
+                showToast(`Туман Війни знято з ${b.code}. Переводимо групу...`);
+            } else {
+                showToast(`Команду переходу в ${b.code} відправлено всій групі!`);
+            }
+
+            const transferCmd = {
+                sectorId: secId,
+                sectorCode: b.code,
+                sectorName: b.name,
+                file: getSectorFileName(secId),
+                timestamp: Date.now()
+            };
+
+            state.groupTransfer = transferCmd;
+            lastHandledTransferTimestamp = transferCmd.timestamp;
+            try {
+                sessionStorage.setItem('entropia_last_transfer_ts', String(transferCmd.timestamp));
+            } catch (e) {}
+
+            // Відправляємо команду через MQTT, BroadcastChannel та зберігаємо стан
+            publishMqttGroupCommand(transferCmd);
+            if (localBroadcastChannel) {
+                try {
+                    localBroadcastChannel.postMessage({ type: 'GROUP_SECTOR_TRANSFER', payload: transferCmd });
+                } catch (e) {}
+            }
+            saveStateToLocal();
+
+            // Переводимо екран Майстра також на карту сектора через 450 мс
+            setTimeout(() => {
+                enterFocusedSectorMap(true);
+            }, 450);
+        }
+
+        function handleIncomingGroupTransfer(transferCmd, isRealtimeEvent = false) {
+            if (!transferCmd || typeof transferCmd.sectorId !== 'number') return;
+            state.groupTransfer = transferCmd;
+
+            const secId = transferCmd.sectorId;
+            const b = ARK_BIOMES[secId];
+            if (!b) return;
+
+            // Показуємо кнопку швидкого приєднання у верхній панелі
+            const joinBtn = document.getElementById('header-group-sector-btn');
+            if (joinBtn && state.unlockedSectors[secId]) {
+                joinBtn.textContent = `📍 Група: ${b.code} →`;
+                joinBtn.classList.remove('hidden');
+            }
+
+            // Автоматично перенаправляємо гравців, якщо сектор відкритий і це нова команда від Майстра
+            const isRecentCommand = (Date.now() - transferCmd.timestamp) < 120000; // протягом останніх 2 хвилин
+            const isAlreadyHandled = transferCmd.timestamp <= lastHandledTransferTimestamp;
+
+            if (!state.admin.isAdmin && state.unlockedSectors[secId] && !isAlreadyHandled && (isRealtimeEvent || isRecentCommand)) {
+                lastHandledTransferTimestamp = transferCmd.timestamp;
+                try {
+                    sessionStorage.setItem('entropia_last_transfer_ts', String(transferCmd.timestamp));
+                } catch (e) {}
+
+                showToast(`📡 Майстер переводить групу в ${b.code} (${b.name})...`);
+                setTimeout(() => {
+                    const targetUrl = buildSectorNavigationUrl(secId, 'player');
+                    window.location.href = targetUrl;
+                }, 600);
+            }
+        }
+
+        function joinActiveGroupSector() {
+            if (!state.groupTransfer || typeof state.groupTransfer.sectorId !== 'number') return;
+            const secId = state.groupTransfer.sectorId;
+            if (!state.unlockedSectors[secId] && !state.admin.isAdmin) {
+                triggerFogOfWarDenial(secId);
+                return;
+            }
+            state.focusedSectorId = secId;
+            enterFocusedSectorMap(false);
+        }
+
+        let denialBannerTimer = null;
+        let denialAnimFrame = null;
+
+        function triggerFogOfWarDenial(secId) {
+            const b = ARK_BIOMES[secId] || ARK_BIOMES[0];
+            playBabylonSound('denied');
+
+            const banner = document.getElementById('babylon-denial-banner');
+            const codeEl = document.getElementById('babylon-denial-code');
+            const textEl = document.getElementById('babylon-denial-text');
+
+            if (codeEl) codeEl.textContent = `[СИСТЕМА ВАВИЛОНІЯ: ДОСТУП ДО ${b.code} ЗАБЛОКОВАНО]`;
+            if (textEl) textEl.textContent = `СЕКТОР ПІД КАРАНТИНОМ АБО НЕ РОЗВІДАНО. АКТИВУЙТЕ МАЯК АРХАНГЕЛА.`;
+
+            if (banner) {
+                banner.classList.remove('hidden');
+                const inner = banner.firstElementChild;
+                if (inner) {
+                    inner.classList.remove('babylon-denial-alert');
+                    void inner.offsetWidth;
+                    inner.classList.add('babylon-denial-alert');
+                }
+                if (denialBannerTimer) clearTimeout(denialBannerTimer);
+                denialBannerTimer = setTimeout(() => {
+                    banner.classList.add('hidden');
+                }, 3400);
+            }
+
+            // Запускаємо червоний голографічний імпульс відмови на секторі
+            state.deniedPulse = { secId, alpha: 1.0 };
+            if (denialAnimFrame) cancelAnimationFrame(denialAnimFrame);
+
+            function animateDenial() {
+                if (!state.deniedPulse) return;
+                state.deniedPulse.alpha -= 0.045;
+                if (state.deniedPulse.alpha <= 0) {
+                    state.deniedPulse = null;
+                    renderMap();
+                    return;
+                }
+                renderMap();
+                denialAnimFrame = requestAnimationFrame(animateDenial);
+            }
+            denialAnimFrame = requestAnimationFrame(animateDenial);
+        }
+
+        function exitDetailedSectorMode() {
+            state.focusedSectorId = null;
+            document.getElementById('sector-focus-banner').classList.add('hidden');
+            document.getElementById('sector-dossier-card').classList.add('hidden');
+            document.getElementById('header-focus-sector').textContent = 'Огляд: Увесь Ковчег';
+            resetViewport();
+            syncUIFromState();
+        }
+
+        function renderSectorDossier(secId) {
+            const b = ARK_BIOMES[secId];
+            const card = document.getElementById('sector-dossier-card');
+            if (!b) {
+                card.classList.add('hidden');
+                return;
+            }
+
+            const sectorMarkers = state.details.markers.filter(m => getSectorIdAtPoint(m.x, m.y) === secId);
+            const sectorRuins = state.details.ruinClusters.filter(r => getSectorIdAtPoint(r.x, r.y) === secId);
+
+            card.classList.remove('hidden');
+            card.innerHTML = `
+                <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div>
+                        <span class="text-[10px] font-mono-tech px-1.5 py-0.5 rounded" style="background:${b.color}22; color:${b.color}">${b.code}</span>
+                        <h4 class="text-sm font-bold text-white mt-1">${b.name}</h4>
+                    </div>
+                    <button type="button" onclick="toggleSectorUnlocked(${secId})" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition cursor-pointer ${state.unlockedSectors[secId] ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-rose-500/20 border-rose-500/40 text-rose-300'}">
+                        ${state.unlockedSectors[secId] ? '👁️ Відкритий' : '🔒 Схований'}
+                    </button>
+                </div>
+                ${!state.unlockedSectors[secId] ? `
+                    <div class="px-2.5 py-1.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-200 font-medium">
+                        ⚠️ Цей сектор зараз прихований Туманом Війни для гравців.
+                    </div>
+                ` : ''}
+                <div class="text-xs text-slate-300 leading-relaxed">${b.desc}</div>
+                <div class="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1 text-[11px]">
+                    <div><span class="text-slate-400">Керуючий ШІ:</span> <span class="text-cyan-300 font-medium">${b.archangel}</span></div>
+                    <div><span class="text-slate-400">Ключові особливості:</span> <span class="text-slate-200">${b.features}</span></div>
+                    <div><span class="text-slate-400">Файл карти:</span> <code class="text-emerald-300 font-mono-tech">${getSectorFileName(secId)}</code></div>
+                    <div><span class="text-slate-400">Об'єкти в секторі:</span> <span class="text-amber-300 font-mono-tech">${sectorMarkers.length} міток • ${sectorRuins.length} кварталів руїн</span></div>
+                </div>
+                <div class="grid grid-cols-1 gap-1.5 pt-1">
+                    <button type="button" onclick="enterFocusedSectorMap(false)" class="w-full py-2 px-3 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/50 text-xs font-bold text-cyan-200 transition cursor-pointer">
+                        👁️ Оглянути сектор (Тільки я) → ${getSectorFileName(secId)}
+                    </button>
+                    <button type="button" onclick="transferGroupToFocusedSector()" class="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition shadow cursor-pointer">
+                        📡 Перевести групу в сектор (${b.code})
+                    </button>
+                </div>
+                ${sectorRuins.length > 0 ? `
+                    <div class="space-y-1 pt-1">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Руїни в цьому секторі:</div>
+                        <div class="space-y-1">
+                            ${sectorRuins.map(r => `
+                                <button type="button" onclick="selectItem('ruin', '${r.id}')" class="w-full text-left px-2 py-1 rounded bg-slate-950/60 hover:bg-slate-800 text-[11px] text-slate-200 flex items-center justify-between transition cursor-pointer">
+                                    <span>🏚️ ${escapeHtml(r.title)}</span>
+                                    <span class="text-[10px] text-cyan-400">${r.badge}</span>
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            `;
+        }
+
+        function setEditorTool(toolName) {
+            if (!state.admin.isAdmin) toolName = 'pan';
+            state.editor.activeTool = toolName;
+
+            ['pan', 'marker'].forEach(t => {
+                const btn = document.getElementById(`tool-btn-${t}`);
+                if (btn) {
+                    if (t === toolName) btn.classList.add('tool-btn-active');
+                    else btn.classList.remove('tool-btn-active');
+                }
+            });
+
+            const createBox = document.getElementById('create-marker-box');
+            if (createBox) createBox.classList.toggle('hidden', toolName !== 'marker');
+
+            const bannerLabel = document.getElementById('active-tool-label');
+            if (toolName === 'marker') {
+                bannerLabel.textContent = 'Режим встановлення мітки: клікніть у потрібну точку на карті';
+                canvas.style.cursor = 'crosshair';
+            } else {
+                bannerLabel.textContent = 'Клікніть на сектор для огляду регіону або на мітку/руїну для деталей';
+                canvas.style.cursor = 'grab';
+            }
+        }
+
+        function handleMapClickAction(worldX, worldY) {
+            const normDist = Math.hypot(worldX, worldY);
+            const secId = getSectorIdAtPoint(worldX, worldY);
+
+            if (state.editor.activeTool === 'marker' && state.admin.isAdmin) {
+                const category = document.getElementById('new-marker-category').value;
+                const titleInput = document.getElementById('new-marker-title');
+                const notesInput = document.getElementById('new-marker-notes');
+                const defaultTitle = MARKER_STYLES[category]?.badge || 'Мітка';
+                const title = titleInput.value.trim() || `${defaultTitle} #${state.details.markers.length + 1}`;
+                const notes = notesInput.value.trim();
+
+                const newMarker = {
+                    id: 'm_' + Date.now() + '_' + Math.floor(Math.random() * 999),
+                    x: worldX,
+                    y: worldY,
+                    category,
+                    title,
+                    notes
+                };
+
+                state.details.markers.push(newMarker);
+                titleInput.value = '';
+                notesInput.value = '';
+                setEditorTool('pan');
+                selectItem('marker', newMarker.id);
+                syncUIFromState();
+                renderMap();
+                saveStateToLocal();
+                showToast(`Додано мітку: ${title}`);
+                return;
+            }
+
+            // Якщо клік за межами купола Ковчега — скидаємо виділення/огляд
+            if (normDist > 0.88) {
+                deselectItem();
+                if (state.focusedSectorId !== null) {
+                    exitDetailedSectorMode();
+                }
+                return;
+            }
+
+            // 3. Перевірка блокування Туманом Війни для Гравців
+            if (!state.unlockedSectors[secId] && !state.admin.isAdmin) {
+                deselectItem();
+                triggerFogOfWarDenial(secId);
+                return;
+            }
+
+            // Перевіряємо клік по мітці або руїні (у відкритому секторі або для Майстра)
+            const clickedMarker = findMarkerNear(worldX, worldY);
+            if (clickedMarker) {
+                selectItem('marker', clickedMarker.id);
+                return;
+            }
+
+            const clickedRuin = findRuinNear(worldX, worldY);
+            if (clickedRuin) {
+                selectItem('ruin', clickedRuin.id);
+                return;
+            }
+
+            deselectItem();
+
+            // 2. Режим огляду секторів при кліку безпосередньо на область сектора (для Гравців і Майстра)
+            if (state.focusedSectorId !== secId) {
+                focusDetailedSector(secId);
+            }
+        }
+
+        function findMarkerNear(wx, wy) {
+            const baseR = getMapBaseRadiusPx() * state.view.zoom;
+            const hitRadiusWorld = 15 / baseR;
+            for (let i = state.details.markers.length - 1; i >= 0; i--) {
+                const m = state.details.markers[i];
+                const secId = getSectorIdAtPoint(m.x, m.y);
+                if (!state.unlockedSectors[secId] && !state.admin.isAdmin) continue;
+                if (Math.hypot(m.x - wx, m.y - wy) <= hitRadiusWorld) return m;
+            }
+            return null;
+        }
+
+        function findRuinNear(wx, wy) {
+            const globalScale = (state.ruinConfig.globalScale || 50) / 100;
+            for (let i = state.details.ruinClusters.length - 1; i >= 0; i--) {
+                const rc = state.details.ruinClusters[i];
+                const secId = getSectorIdAtPoint(rc.x, rc.y);
+                if (!state.unlockedSectors[secId] && !state.admin.isAdmin) continue;
+                const hitR = rc.radiusWorld * (rc.scaleMultiplier || 1.0) * globalScale * 1.15;
+                if (Math.hypot(rc.x - wx, rc.y - wy) <= hitR) return rc;
+            }
+            return null;
+        }
+
+        function selectItem(type, id) {
+            state.editor.selectedItem = { type, id };
+            const card = document.getElementById('selected-item-card');
+            const editBox = document.getElementById('edit-marker-box');
+            const adminActions = document.getElementById('sel-admin-actions');
+            const editBtn = document.getElementById('sel-btn-edit');
+            const deleteBtn = document.getElementById('sel-btn-delete');
+
+            const arkRadiusKm = state.overlays.arkDiameterKm * 0.5;
+            const worldToKm = arkRadiusKm / 0.85;
+
+            if (type === 'marker') {
+                const m = state.details.markers.find(item => item.id === id);
+                if (!m) return;
+                const st = MARKER_STYLES[m.category] || MARKER_STYLES.note;
+                document.getElementById('sel-item-badge').textContent = st.badge;
+                document.getElementById('sel-item-title').textContent = m.title;
+                document.getElementById('sel-item-desc').textContent = m.notes || 'Опис відсутній.';
+
+                const kmX = (m.x * worldToKm).toFixed(1);
+                const kmY = (-m.y * worldToKm).toFixed(1);
+                document.getElementById('sel-item-coords').textContent = `X: ${kmX} км, Y: ${kmY} км`;
+                card.classList.remove('hidden');
+
+                if (state.admin.isAdmin) {
+                    adminActions.classList.remove('hidden');
+                    editBtn.classList.remove('hidden');
+                    deleteBtn.classList.remove('hidden');
+
+                    document.getElementById('edit-marker-category').value = m.category || 'note';
+                    document.getElementById('edit-marker-title').value = m.title || '';
+                    document.getElementById('edit-marker-notes').value = m.notes || '';
+                    editBox.classList.remove('hidden');
+                } else {
+                    adminActions.classList.add('hidden');
+                    editBox.classList.add('hidden');
+                }
+            } else if (type === 'ruin') {
+                const r = state.details.ruinClusters.find(item => item.id === id);
+                if (!r) return;
+                document.getElementById('sel-item-badge').textContent = `🏚️ ${r.badge || 'РУЇНИ'}`;
+                document.getElementById('sel-item-title').textContent = r.title;
+                document.getElementById('sel-item-desc').textContent = r.notes;
+
+                const kmX = (r.x * worldToKm).toFixed(1);
+                const kmY = (-r.y * worldToKm).toFixed(1);
+                document.getElementById('sel-item-coords').textContent = `X: ${kmX} км, Y: ${kmY} км`;
+                card.classList.remove('hidden');
+
+                adminActions.classList.add('hidden');
+                editBox.classList.add('hidden');
+            }
+
+            renderMap();
+        }
+
+        function openMarkerEditFromCard() {
+            if (!state.admin.isAdmin) return;
+            switchSidebarTab('markers');
+            const sb = document.getElementById('main-sidebar');
+            sb.classList.remove('hidden');
+            document.getElementById('edit-marker-title').focus();
+        }
+
+        function saveEditedMarker() {
+            const sel = state.editor.selectedItem;
+            if (!sel || sel.type !== 'marker') return;
+            const m = state.details.markers.find(item => item.id === sel.id);
+            if (!m) return;
+
+            m.category = document.getElementById('edit-marker-category').value;
+            m.title = document.getElementById('edit-marker-title').value.trim() || 'Без назви';
+            m.notes = document.getElementById('edit-marker-notes').value.trim();
+
+            selectItem('marker', m.id);
+            syncUIFromState();
+            renderMap();
+            saveStateToLocal();
+            showToast(`Мітку «${m.title}» оновлено!`);
+        }
+
+        function deselectItem() {
+            state.editor.selectedItem = null;
+            document.getElementById('selected-item-card').classList.add('hidden');
+            document.getElementById('edit-marker-box').classList.add('hidden');
+            renderMap();
+        }
+
+        function deleteSelectedItem() {
+            if (!state.admin.isAdmin) return;
+            const sel = state.editor.selectedItem;
+            if (!sel || sel.type !== 'marker') return;
+            deleteMarkerById(sel.id);
+            deselectItem();
+        }
+
+        function deleteMarkerById(id) {
+            if (!state.admin.isAdmin) return;
+            state.details.markers = state.details.markers.filter(x => x.id !== id);
+            if (state.editor.selectedItem?.id === id) deselectItem();
+            syncUIFromState();
+            renderMap();
+            saveStateToLocal();
+            showToast('Мітку видалено');
+        }
+
+        function resetToBaseMarkers() {
+            if (!state.admin.isAdmin) return;
+            state.details.markers = JSON.parse(JSON.stringify(USER_BASE_MARKERS));
+            syncUIFromState();
+            renderMap();
+            saveStateToLocal();
+            showToast('Базові 10 міток відновлено');
+        }
+
+        /***********************************************************************
+         * 8. ADMIN ROLE LOCK (STARTS IN PLAYER MODE, PASSWORD "ентропія")
+         ***********************************************************************/
+        function handleAdminButtonClick() {
+            if (state.admin.isAdmin) {
+                setAdminMode(false);
+                showToast('Увімкнено Режим Гравця (панель керування сховано)');
+            } else {
+                document.getElementById('admin-login-pin').value = '';
+                document.getElementById('admin-login-modal').classList.remove('hidden');
+                setTimeout(() => document.getElementById('admin-login-pin').focus(), 50);
+            }
+        }
+
+        function closeAdminLoginModal() {
+            document.getElementById('admin-login-modal').classList.add('hidden');
+        }
+
+        function normalizeAdminPasswordInput(str) {
+            return String(str || '')
+                .trim()
+                .toLowerCase()
+                // Заміна можливих англійських літер-двійників на українські
+                .replace(/e/g, 'е')
+                .replace(/i/g, 'і')
+                .replace(/o/g, 'о')
+                .replace(/p/g, 'р')
+                .replace(/a/g, 'а')
+                .replace(/c/g, 'с');
+        }
+
+        function verifyAdminLogin() {
+            const rawEntered = document.getElementById('admin-login-pin').value;
+            const normalized = normalizeAdminPasswordInput(rawEntered);
+
+            if (normalized === 'ентропія' || normalized === 'энтропия') {
+                state.admin.pin = 'ентропія';
+                closeAdminLoginModal();
+                applyDetectedUserIdentity('gm', state.admin.characterName, 'manual_login');
+                showToast('Вітаємо, Майстре! Панель Адміна розблоковано');
+            } else {
+                showToast('Невірний пароль Адміна');
+            }
+        }
+
+        function setAdminMode(isAdmin) {
+            state.admin.isAdmin = isAdmin;
+            state.admin.role = isAdmin ? 'gm' : 'player';
+
+            const sidebar = document.getElementById('main-sidebar');
+            const toggleBtn = document.getElementById('sidebar-toggle-btn');
+            const jsonBtn = document.getElementById('admin-json-btn');
+            const dlHtmlBtn = document.getElementById('admin-download-html-btn');
+            const roleBadge = document.getElementById('role-status-badge');
+            const lockIcon = document.getElementById('admin-lock-icon');
+            const lockText = document.getElementById('admin-lock-text');
+
+            if (isAdmin) {
+                sidebar.classList.remove('hidden');
+                toggleBtn.classList.remove('hidden');
+                jsonBtn.classList.remove('hidden');
+                if (dlHtmlBtn) dlHtmlBtn.classList.remove('hidden');
+                roleBadge.textContent = '👑 Режим Майстра';
+                roleBadge.className = 'px-2 py-0.5 text-[10px] font-mono-tech font-semibold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded';
+                lockIcon.textContent = '🔓';
+                lockText.textContent = 'Сховати для гравців';
+                if (state.editor.selectedItem?.type === 'marker') {
+                    selectItem('marker', state.editor.selectedItem.id);
+                }
+            } else {
+                setEditorTool('pan');
+                sidebar.classList.add('hidden');
+                toggleBtn.classList.add('hidden');
+                jsonBtn.classList.add('hidden');
+                if (dlHtmlBtn) dlHtmlBtn.classList.add('hidden');
+                roleBadge.textContent = state.admin.characterName ? `👁️ Гравець` : '👁️ Режим Гравця';
+                roleBadge.className = 'px-2 py-0.5 text-[10px] font-mono-tech font-semibold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700 rounded';
+                lockIcon.textContent = '🔒';
+                lockText.textContent = 'Вхід Адміна';
+                document.getElementById('edit-marker-box').classList.add('hidden');
+                if (state.editor.selectedItem) {
+                    document.getElementById('sel-admin-actions').classList.add('hidden');
+                }
+                // Якщо гравець оглядав прихований сектор під час виходу з режиму Майстра — закриваємо огляд
+                if (state.focusedSectorId !== null && !state.unlockedSectors[state.focusedSectorId]) {
+                    exitDetailedSectorMode();
+                }
+            }
+
+            if (state.focusedSectorId !== null) {
+                updateSectorFocusBanner(state.focusedSectorId);
+            }
+
+            setTimeout(resizeCanvas, 50);
+        }
+
+        function syncUIFromState() {
+            let unlockedCount = 0;
+            for (let i = 0; i <= 8; i++) if (state.unlockedSectors[i]) unlockedCount++;
+            document.getElementById('header-unlocked-count').textContent = `${unlockedCount} / 9`;
+
+            const islandList = document.getElementById('island-sectors-list');
+            const sectorItemsHtml = [];
+            for (let secId = 0; secId <= 8; secId++) {
+                const b = ARK_BIOMES[secId];
+                const isOpen = state.unlockedSectors[secId];
+                sectorItemsHtml.push(`
+                    <div class="p-2.5 rounded-xl bg-slate-900/90 border ${isOpen ? 'border-slate-700/90' : 'border-rose-500/30 opacity-75'} flex items-center justify-between gap-2 transition">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <span class="w-3 h-3 rounded-full shrink-0" style="background:${b.color}"></span>
+                            <div class="truncate">
+                                <div class="text-xs font-bold text-white truncate">${b.code} — ${b.name}</div>
+                                <div class="text-[10px] text-slate-400 truncate">${b.archangel}</div>
+                            </div>
+                        </div>
+                        <button type="button" onclick="toggleSectorUnlocked(${secId})" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold shrink-0 border transition cursor-pointer ${isOpen ? 'bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/40 text-emerald-300' : 'bg-slate-800 hover:bg-slate-700 border-slate-600 text-slate-300'}">
+                            ${isOpen ? '👁️ Відкритий' : '🔒 Схований'}
+                        </button>
+                    </div>
+                `);
+            }
+            islandList.innerHTML = sectorItemsHtml.join('');
+
+            document.getElementById('toggle-biome-colors').checked = state.terrain.useBiomeDesign;
+            document.getElementById('toggle-sector-borders').checked = state.overlays.showSectors;
+            document.getElementById('toggle-ruin-titles').checked = state.ruinConfig.showLabels;
+
+            const markersContainer = document.getElementById('markers-list-container');
+            document.getElementById('markers-count-badge').textContent = state.details.markers.length;
+
+            markersContainer.innerHTML = state.details.markers.map(m => {
+                const st = MARKER_STYLES[m.category] || MARKER_STYLES.note;
+                const secId = getSectorIdAtPoint(m.x, m.y);
+                const isSelected = state.editor.selectedItem?.type === 'marker' && state.editor.selectedItem?.id === m.id;
+                return `
+                    <div class="flex items-center justify-between px-2.5 py-2 rounded-xl border transition ${isSelected ? 'bg-amber-500/15 border-amber-400/60' : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'} text-xs">
+                        <button type="button" onclick="selectItem('marker', '${m.id}')" class="flex items-center gap-2.5 text-left truncate flex-1 cursor-pointer">
+                            <span class="w-5 h-5 rounded-full bg-slate-950 border flex items-center justify-center text-[10px] shrink-0" style="border-color:${st.color}; color:${st.color}">${st.symbol}</span>
+                            <div class="truncate">
+                                <div class="font-medium text-slate-100 truncate">${escapeHtml(m.title)}</div>
+                                <div class="text-[10px] text-slate-400 truncate">${ARK_BIOMES[secId].code} ${m.notes ? '• ' + escapeHtml(m.notes) : ''}</div>
+                            </div>
+                        </button>
+                        <button type="button" onclick="deleteMarkerById('${m.id}')" title="Видалити мітку" class="text-slate-500 hover:text-rose-400 px-1.5 py-1 cursor-pointer">✕</button>
+                    </div>
+                `;
+            }).join('');
+
+            const sectorCardsContainer = document.getElementById('detailed-sector-cards');
+            const sectorCardsHtml = [];
+            for (let secId = 0; secId <= 8; secId++) {
+                const b = ARK_BIOMES[secId];
+                const isFocused = state.focusedSectorId === secId;
+                const isUnlocked = state.unlockedSectors[secId];
+                const mCount = state.details.markers.filter(m => getSectorIdAtPoint(m.x, m.y) === secId).length;
+                const rCount = state.details.ruinClusters.filter(r => getSectorIdAtPoint(r.x, r.y) === secId).length;
+
+                sectorCardsHtml.push(`
+                    <div class="p-2.5 rounded-xl border transition space-y-2 ${isFocused ? 'bg-cyan-500/15 border-cyan-400 shadow-lg' : 'bg-slate-900/90 border-slate-800'}">
+                        <button type="button" onclick="focusDetailedSector(${secId})" class="w-full text-left flex items-center justify-between gap-2 cursor-pointer">
+                            <div class="flex items-center gap-2.5 min-w-0">
+                                <span class="w-3 h-3 rounded-full shrink-0" style="background:${b.color}"></span>
+                                <div class="truncate">
+                                    <div class="text-xs font-bold text-white truncate">${b.code}: ${b.name} ${!isUnlocked ? '🔒' : ''}</div>
+                                    <div class="text-[10px] text-slate-400 truncate">${mCount} міток • ${rCount} руїн • ${getSectorFileName(secId)}</div>
+                                </div>
+                            </div>
+                            <span class="text-[10px] font-mono-tech text-cyan-300 shrink-0">Фокус →</span>
+                        </button>
+                        <div class="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-800/80">
+                            <button type="button" onclick="state.focusedSectorId=${secId}; enterFocusedSectorMap(false)" class="py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-cyan-200 font-medium transition cursor-pointer truncate">
+                                👁️ Тільки я (${getSectorFileName(secId)})
+                            </button>
+                            <button type="button" onclick="state.focusedSectorId=${secId}; transferGroupToFocusedSector()" class="py-1 px-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-[10px] text-amber-200 font-semibold transition cursor-pointer truncate">
+                                📡 Перевести групу
+                            </button>
+                        </div>
+                    </div>
+                `);
+            }
+            sectorCardsContainer.innerHTML = sectorCardsHtml.join('');
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        /***********************************************************************
+         * 9. VIEWPORT NAVIGATION & CLOUD / GITHUB / LOCAL PERSISTENCE
+         ***********************************************************************/
+        function zoomMap(factor, centerX = canvas.width * 0.5, centerY = canvas.height * 0.5) {
+            const oldZoom = state.view.zoom;
+            const newZoom = Math.max(0.45, Math.min(8.0, oldZoom * factor));
+            const scaleChange = newZoom / oldZoom;
+
+            const cx = canvas.width * 0.5 + state.view.panX;
+            const cy = canvas.height * 0.5 + state.view.panY;
+
+            state.view.panX = (centerX - scaleChange * (centerX - cx)) - canvas.width * 0.5;
+            state.view.panY = (centerY - scaleChange * (centerY - cy)) - canvas.height * 0.5;
+            state.view.zoom = newZoom;
+
+            renderMap();
+        }
+
+        function resetViewport() {
+            state.view.panX = 0;
+            state.view.panY = 0;
+            state.view.zoom = 1.0;
+            renderMap();
+        }
+
+        function toggleSidebar() {
+            if (!state.admin.isAdmin) return;
+            const sb = document.getElementById('main-sidebar');
+            sb.classList.toggle('hidden');
+            setTimeout(resizeCanvas, 50);
+        }
+
+        function updateCursorTelemetry(sx, sy) {
+            const world = screenToWorld(sx, sy);
+            state.view.cursorWorldX = world.x;
+            state.view.cursorWorldY = world.y;
+
+            const arkRadiusKm = state.overlays.arkDiameterKm * 0.5;
+            const worldToKm = arkRadiusKm / 0.85;
+            const kmX = world.x * worldToKm;
+            const kmY = -world.y * worldToKm;
+
+            document.getElementById('hud-coords').textContent =
+                `X: ${kmX >= 0 ? '+' : ''}${kmX.toFixed(1)} км | Y: ${kmY >= 0 ? '+' : ''}${kmY.toFixed(1)} км`;
+
+            const normDist = Math.hypot(world.x, world.y);
+            const secId = getSectorIdAtPoint(world.x, world.y);
+            const biome = ARK_BIOMES[secId];
+
+            if (normDist > 0.88) {
+                document.getElementById('hud-polar').textContent = 'Зовнішня Безодня';
+                document.getElementById('hud-elevation').textContent = 'За межами Купола';
+                document.getElementById('hud-elevation').className = 'text-rose-400';
+            } else if (!state.unlockedSectors[secId]) {
+                document.getElementById('hud-polar').textContent = `${biome.code} (Під Карантином)`;
+                document.getElementById('hud-elevation').textContent = state.admin.isAdmin ? '🔒 Приховано для гравців' : '🔒 Доступ заблоковано';
+                document.getElementById('hud-elevation').className = 'text-rose-400';
+            } else {
+                document.getElementById('hud-polar').textContent = `${biome.code}: ${biome.name}`;
+                const h = getHeightAtNorm(world.x, world.y);
+                const elevEl = document.getElementById('hud-elevation');
+                if (h >= 0) {
+                    elevEl.textContent = `+${Math.round(h * 1850)} м (Клік — Огляд сектора)`;
+                    elevEl.className = 'text-emerald-300';
+                } else {
+                    elevEl.textContent = `${Math.round(h * 1400)} м (Вода • Клік — Огляд)`;
+                    elevEl.className = 'text-sky-400';
+                }
+            }
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            state.view.isDragging = true;
+            state.view.hasMoved = false;
+            state.view.dragStartX = e.clientX - state.view.panX;
+            state.view.dragStartY = e.clientY - state.view.panY;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+
+            if (sx >= 0 && sy >= 0 && sx <= rect.width && sy <= rect.height) {
+                updateCursorTelemetry(sx, sy);
+            }
+
+            if (!state.view.isDragging) return;
+            const dx = (e.clientX - state.view.dragStartX) - state.view.panX;
+            const dy = (e.clientY - state.view.dragStartY) - state.view.panY;
+            if (Math.hypot(dx, dy) > 4) state.view.hasMoved = true;
+            state.view.panX = e.clientX - state.view.dragStartX;
+            state.view.panY = e.clientY - state.view.dragStartY;
+            renderMap();
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (!state.view.isDragging) return;
+            state.view.isDragging = false;
+
+            if (!state.view.hasMoved && e.target === canvas) {
+                const rect = canvas.getBoundingClientRect();
+                const sx = e.clientX - rect.left;
+                const sy = e.clientY - rect.top;
+                const world = screenToWorld(sx, sy);
+                handleMapClickAction(world.x, world.y);
+            }
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+            const factor = e.deltaY < 0 ? 1.15 : 0.87;
+            zoomMap(factor, sx, sy);
+        }, { passive: false });
+
+        let lastTouchDist = null;
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                const t = e.touches[0];
+                state.view.isDragging = true;
+                state.view.hasMoved = false;
+                state.view.dragStartX = t.clientX - state.view.panX;
+                state.view.dragStartY = t.clientY - state.view.panY;
+            } else if (e.touches.length === 2) {
+                state.view.isDragging = false;
+                lastTouchDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+            }
+        }, { passive: true });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1 && state.view.isDragging) {
+                const t = e.touches[0];
+                const dx = (t.clientX - state.view.dragStartX) - state.view.panX;
+                const dy = (t.clientY - state.view.dragStartY) - state.view.panY;
+                if (Math.hypot(dx, dy) > 5) state.view.hasMoved = true;
+                state.view.panX = t.clientX - state.view.dragStartX;
+                state.view.panY = t.clientY - state.view.dragStartY;
+                renderMap();
+            } else if (e.touches.length === 2 && lastTouchDist) {
+                const newDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                const factor = newDist / lastTouchDist;
+                lastTouchDist = newDist;
+                zoomMap(factor);
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (state.view.isDragging && !state.view.hasMoved && e.changedTouches.length === 1) {
+                const t = e.changedTouches[0];
+                const rect = canvas.getBoundingClientRect();
+                const world = screenToWorld(t.clientX - rect.left, t.clientY - rect.top);
+                handleMapClickAction(world.x, world.y);
+            }
+            state.view.isDragging = false;
+            lastTouchDist = null;
+        });
+        function initMqttRealtimeSync() {
+            if (typeof mqtt === 'undefined') return;
+            try {
+                const clientId = 'entropia_ark_' + Math.random().toString(16).slice(2, 10);
+                mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+                    clientId,
+                    clean: true,
+                    connectTimeout: 5000,
+                    reconnectPeriod: 6000
+                });
+
+                mqttClient.on('connect', () => {
+                    setCloudBadgeStatus('MQTT Онлайн', 'bg-emerald-400');
+                    mqttClient.subscribe([MQTT_TOPIC_STATE, MQTT_TOPIC_COMMAND]);
+                });
+
+                mqttClient.on('message', (topic, message) => {
+                    try {
+                        const parsed = JSON.parse(message.toString());
+                        if ( parsed.senderClientId && parsed.senderClientId === clientId ) return;
+
+                        if (topic === MQTT_TOPIC_COMMAND && parsed.type === 'GROUP_SECTOR_TRANSFER') {
+                            if (parsed.unlockedSectors) {
+                                Object.assign(state.unlockedSectors, parsed.unlockedSectors);
+                                syncUIFromState();
+                                renderMap();
+                            }
+                            handleIncomingGroupTransfer(parsed.command, true);
+                        } else if (topic === MQTT_TOPIC_STATE) {
+                            applyRemoteMapData(parsed);
+                        }
+                    } catch (e) {}
+                });
+
+                mqttClient.on('error', () => {
+                    // Тихий фолбек на GitHub / LocalStorage без зависання
+                });
+
+                mqttClient.__customClientId = clientId;
+            } catch (e) {}
+        }
+
+        function publishMqttStateUpdate() {
+            if (!mqttClient || !mqttClient.connected) return;
+            try {
+                const payload = buildExportableMapPayload();
+                payload.senderClientId = mqttClient.__customClientId;
+                mqttClient.publish(MQTT_TOPIC_STATE, JSON.stringify(payload), { qos: 0, retain: true });
+            } catch (e) {}
+        }
+
+        function publishMqttGroupCommand(transferCmd) {
+            if (!mqttClient || !mqttClient.connected) return;
+            try {
+                const packet = {
+                    type: 'GROUP_SECTOR_TRANSFER',
+                    senderClientId: mqttClient.__customClientId,
+                    command: transferCmd,
+                    unlockedSectors: state.unlockedSectors
+                };
+                mqttClient.publish(MQTT_TOPIC_COMMAND, JSON.stringify(packet), { qos: 0 });
+            } catch (e) {}
+        }
+
+        if (localBroadcastChannel) {
+            localBroadcastChannel.onmessage = (ev) => {
+                if (!ev.data) return;
+                if (ev.data.type === 'GROUP_SECTOR_TRANSFER') {
+                    handleIncomingGroupTransfer(ev.data.payload, true);
+                } else if (ev.data.type === 'MAP_STATE_UPDATE') {
+                    applyRemoteMapData(ev.data.payload);
+                }
+            };
+        }
+
+        async function saveStateToLocal() {
+            if (isApplyingRemoteUpdate) return;
+            const payload = buildExportableMapPayload();
+
+            const embeddedEl = document.getElementById('embedded-map-state');
+            if (embeddedEl) {
+                embeddedEl.textContent = '\n' + JSON.stringify(payload, null, 2) + '\n';
+            }
+
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+                setCloudBadgeStatus('Збережено', 'bg-emerald-400');
+            } catch (err) {
+                console.warn('Save warning:', err);
+            }
+
+            if (localBroadcastChannel) {
+                try {
+                    localBroadcastChannel.postMessage({ type: 'MAP_STATE_UPDATE', payload });
+                } catch (e) {}
+            }
+
+            publishMqttStateUpdate();
+
+            if (githubSyncConfig.token && githubSyncConfig.repo) {
+                await pushStateToGithubRepo();
+            }
+        }
+
+        function loadStateFromLocal() {
+            try {
+                const scriptEl = document.getElementById('embedded-map-state');
+                if (scriptEl) {
+                    const embedded = JSON.parse(scriptEl.textContent);
+                    if (embedded.githubRepo) githubSyncConfig.repo = embedded.githubRepo;
+                    applyRemoteMapData(embedded);
+                }
+            } catch (e) {}
+
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    applyRemoteMapData(parsed);
+                }
+                const savedToken = localStorage.getItem('entropy_gh_token');
+                if (savedToken) {
+                    githubSyncConfig.token = savedToken;
+                    const tokenInput = document.getElementById('github-token-input');
+                    if (tokenInput) tokenInput.value = savedToken;
+                }
+            } catch (err) {
+                console.warn('Load warning:', err);
+            }
+        }
+
+        async function fetchGithubRemoteMapState() {
+            if (!githubSyncConfig.repo) return false;
+            try {
+                const apiUrl = `https://api.github.com/repos/${githubSyncConfig.repo}/contents/map-state.json?t=${Date.now()}`;
+                const res = await fetch(apiUrl, {
+                    headers: { 'Accept': 'application/vnd.github.v3+json' },
+                    cache: 'no-store'
+                });
+                if (res.ok) {
+                    const fileData = await res.json();
+                    githubSyncConfig.lastSha = fileData.sha;
+                    const decoded = new TextDecoder().decode(
+                        Uint8Array.from(atob(fileData.content.replace(/\s/g, '')), c => c.charCodeAt(0))
+                    );
+                    const parsed = JSON.parse(decoded);
+                    applyRemoteMapData(parsed);
+                    setCloudBadgeStatus('GitHub Синхр.', 'bg-emerald-400');
+                    return true;
+                }
+            } catch (e) {}
+            return false;
+        }
+
+        async function pushStateToGithubRepo() {
+            if (!githubSyncConfig.repo || !githubSyncConfig.token) return false;
+            try {
+                setCloudBadgeStatus('Збереження GitHub...', 'bg-amber-400 animate-ping');
+                const payload = buildExportableMapPayload();
+                const jsonStr = JSON.stringify(payload, null, 2);
+                const bytes = new TextEncoder().encode(jsonStr);
+                let binary = '';
+                bytes.forEach(b => binary += String.fromCharCode(b));
+                const base64Content = btoa(binary);
+
+                const apiUrl = `https://api.github.com/repos/${githubSyncConfig.repo}/contents/map-state.json`;
+                if (!githubSyncConfig.lastSha) {
+                    const checkRes = await fetch(apiUrl, {
+                        headers: {
+                            'Accept': 'application/vnd.github.v3+json',
+                            'Authorization': `Bearer ${githubSyncConfig.token}`
+                        },
+                        cache: 'no-store'
+                    });
+                    if (checkRes.ok) {
+                        const existing = await checkRes.json();
+                        githubSyncConfig.lastSha = existing.sha;
+                    }
+                }
+
+                const bodyObj = {
+                    message: 'Оновлення стану інтерактивної карти ЕНТРОПІЯ',
+                    content: base64Content
+                };
+                if (githubSyncConfig.lastSha) {
+                    bodyObj.sha = githubSyncConfig.lastSha;
+                }
+
+                const putRes = await fetch(apiUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Authorization': `Bearer ${githubSyncConfig.token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(bodyObj)
+                });
+
+                if (putRes.ok) {
+                    const putData = await putRes.json();
+                    githubSyncConfig.lastSha = putData.content?.sha || null;
+                    setCloudBadgeStatus('GitHub Синхр.', 'bg-emerald-400');
+                    return true;
+                } else {
+                    setCloudBadgeStatus('Помилка токена', 'bg-rose-400');
+                }
+            } catch (err) {
+                console.error('GitHub push error:', err);
+                setCloudBadgeStatus('Збій GitHub', 'bg-rose-400');
+            }
+            return false;
+        }
+
+        async function initCloudSync() {
+            setCloudBadgeStatus('Активно', 'bg-emerald-400');
+            initMqttRealtimeSync();
+            await fetchGithubRemoteMapState();
+            setInterval(() => {
+                if (!state.admin.isAdmin) {
+                    fetchGithubRemoteMapState();
+                }
+            }, 15000);
+        }
+
+        async function connectGithubLiveSync() {
+            const repoVal = document.getElementById('github-repo-input').value.trim();
+            const tokenVal = document.getElementById('github-token-input').value.trim();
+            if (repoVal) githubSyncConfig.repo = repoVal;
+            if (tokenVal) {
+                githubSyncConfig.token = tokenVal;
+                try { localStorage.setItem('entropy_gh_token', tokenVal); } catch (e) {}
+            }
+
+            if (!githubSyncConfig.token) {
+                showToast('Введіть GitHub Personal Access Token для авто-запису');
+                return;
+            }
+
+            const ok = await pushStateToGithubRepo();
+            if (ok) {
+                showToast('Стан карти успішно синхронізовано з GitHub репозиторієм!');
+            } else {
+                showToast('Не вдалося записати в GitHub. Перевірте права токена (repo)');
+            }
+        }
+
+        function downloadUpdatedIndexHtml() {
+            try {
+                const embeddedEl = document.getElementById('embedded-map-state');
+                if (embeddedEl) {
+                    embeddedEl.textContent = '\n' + JSON.stringify(buildExportableMapPayload(), null, 2) + '\n';
+                }
+
+                const clone = document.documentElement.cloneNode(true);
+                const idsToHide = [
+                    'main-sidebar', 'sidebar-toggle-btn', 'admin-json-btn',
+                    'admin-download-html-btn', 'admin-login-modal', 'json-modal',
+                    'selected-item-card', 'edit-marker-box', 'create-marker-box', 'sector-focus-banner'
+                ];
+                idsToHide.forEach(id => {
+                    const el = clone.querySelector(`#${id}`);
+                    if (el) el.classList.add('hidden');
+                });
+                const roleBadge = clone.querySelector('#role-status-badge');
+                if (roleBadge) {
+                    roleBadge.textContent = '👁️ Режим Гравця';
+                    roleBadge.className = 'px-2 py-0.5 text-[10px] font-mono-tech font-semibold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700 rounded';
+                }
+                const lockIcon = clone.querySelector('#admin-lock-icon');
+                if (lockIcon) lockIcon.textContent = '🔒';
+                const lockText = clone.querySelector('#admin-lock-text');
+                if (lockText) lockText.textContent = 'Вхід Адміна';
+
+                const htmlContent = '<!DOCTYPE html>\n' + clone.outerHTML;
+                const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                const link = document.createElement('a');
+                link.download = 'index.html';
+                link.href = URL.createObjectURL(blob);
+                link.click();
+                URL.revokeObjectURL(link.href);
+                showToast('Оновлений index.html завантажено! Замініть ним файл на GitHub.');
+            } catch (err) {
+                console.error('Download HTML error:', err);
+                showToast('Помилка під час формування HTML');
+            }
+        }
+
+        function openJsonModal() {
+            const payload = buildExportableMapPayload();
+            document.getElementById('json-textarea').value = JSON.stringify(payload, null, 2);
+            const repoInput = document.getElementById('github-repo-input');
+            if (repoInput) repoInput.value = githubSyncConfig.repo;
+            document.getElementById('json-modal').classList.remove('hidden');
+        }
+
+        function closeJsonModal() {
+            document.getElementById('json-modal').classList.add('hidden');
+        }
+
+        function copyJsonToClipboard() {
+            const textarea = document.getElementById('json-textarea');
+            textarea.select();
+            document.execCommand('copy');
+            showToast('JSON-код скопійовано в буфер обміну');
+        }
+
+        function copyCharacterSheetIntegrationSnippet() {
+            const snippet = `// Вставте ці 3 рядки у character_sheet при вході Майстра або Гравця:
+localStorage.setItem('entropia_user_role', isMaster ? 'gm' : 'player');
+localStorage.setItem('entropia_char_name', currentCharacterName || '');
+document.querySelector('iframe')?.contentWindow?.postMessage({ type: 'ENTROPIA_USER_CONTEXT', role: isMaster ? 'gm' : 'player', char: currentCharacterName || '' }, '*');`;
+            const textarea = document.getElementById('json-textarea');
+            textarea.value = snippet;
+            textarea.select();
+            document.execCommand('copy');
+            showToast('Сніпет для character_sheet скопійовано!');
+        }
+
+        function importJsonFromModal() {
+            try {
+                const raw = document.getElementById('json-textarea').value;
+                const parsed = JSON.parse(raw);
+                applyRemoteMapData(parsed);
+                saveStateToLocal();
+                closeJsonModal();
+                showToast('Дані міток та відкритих секторів оновлено!');
+            } catch (err) {
+                showToast('Помилка формату JSON');
+            }
+        }
+
+        function exportMapPNG() {
+            const dataUrl = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.download = `entropy_ark_biomes_${state.terrain.seed}.png`;
+            link.href = dataUrl;
+            link.click();
+            showToast('Зображення карти PNG збережено');
+        }
+
+        let toastTimeout = null;
+        function showToast(msg) {
+            const box = document.getElementById('toast-box');
+            document.getElementById('toast-text').textContent = msg;
+            box.classList.remove('opacity-0');
+            box.classList.add('opacity-100');
+            if (toastTimeout) clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                box.classList.remove('opacity-100');
+                box.classList.add('opacity-0');
+            }, 2400);
+        }
+
+        function resizeCanvas() {
+            const wrapper = document.getElementById('canvas-wrapper');
+            if (!wrapper) return;
+            canvas.width = wrapper.clientWidth || window.innerWidth;
+            canvas.height = wrapper.clientHeight || (window.innerHeight - 52);
+            renderMap();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        function bootMapApp() {
+            if (window.__entropyMapBooted) return;
+            window.__entropyMapBooted = true;
+            loadStateFromLocal();
+            // Автоматично визначаємо роль (Майстер чи Гравець) та ім'я персонажа з URL / parent / localStorage
+            detectIdentityFromStorageAndParent();
+            switchSidebarTab('island');
+            setEditorTool('pan');
+            syncUIFromState();
+            resizeCanvas();
+            rebuildIslandTerrain();
+            initCloudSync();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', bootMapApp);
+        } else {
+            bootMapApp();
+        }
+    </script>
+</body>
+</html>
