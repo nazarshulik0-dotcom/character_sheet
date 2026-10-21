@@ -1,0 +1,1639 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ЕНТРОПІЯ — Модуль Етер</title>
+  <!-- MQTT клієнт для міжпристроєвої синхронізації та WebRTC сигналінгу -->
+  <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
+  <script src="entropia_bridge.js" onerror="console.info('[Aether] Працює автономний мережевий міст.')"></script>
+
+  <style>
+    :root {
+      --bg-room: #0d0e10;
+      --bg-panel: rgba(28, 29, 33, 0.88);
+      --bg-panel-inner: rgba(18, 19, 22, 0.75);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(255, 255, 255, 0.18);
+      --text-main: #eceff4;
+      --text-muted: #8b929e;
+      --accent-green: #10b981;
+      --badge-green-bg: rgba(16, 185, 129, 0.18);
+      --badge-green-text: #6ee7b7;
+      --cta-cream: #efe6d5;
+      --cta-cream-hover: #ffffff;
+      --cta-text: #16171a;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-serif: 'Georgia', 'Times New Roman', serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background-color: var(--bg-room);
+      background-image:
+        radial-gradient(ellipse at 50% 48%, rgba(34, 46, 38, 0.32) 0%, rgba(13, 14, 16, 0.96) 68%);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ==================== ВЕРХНЯ ПАНЕЛЬ ==================== */
+    .top-bar {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(14, 15, 18, 0.9);
+      z-index: 30;
+      flex-shrink: 0;
+    }
+
+    .top-bar-left, .top-bar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .top-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-main);
+      letter-spacing: 0.3px;
+    }
+
+    .sync-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+    }
+
+    .sync-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #f59e0b;
+    }
+
+    .sync-dot.online {
+      background: var(--accent-green);
+      box-shadow: 0 0 8px var(--accent-green);
+    }
+
+    .small-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .small-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: var(--border-hover);
+    }
+
+    .small-btn.active {
+      background: var(--badge-green-bg);
+      border-color: rgba(16, 185, 129, 0.45);
+      color: var(--badge-green-text);
+    }
+
+    /* ==================== ОСНОВНИЙ МАКЕТ КІМНАТИ ==================== */
+    .room-layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 280px 1fr 270px;
+      gap: 18px;
+      padding: 18px 22px;
+      position: relative;
+      min-height: 0;
+    }
+
+    .column-side {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 20;
+      min-height: 0;
+    }
+
+    .glass-card {
+      background: var(--bg-panel);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    /* Картка Пригоди «ЕНТРОПІЯ» */
+    .adventure-box {
+      height: 88px;
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(20, 83, 62, 0.55) 0%, rgba(8, 15, 14, 0.96) 85%);
+      border: 1px solid rgba(110, 231, 183, 0.18);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .adventure-box h1 {
+      font-family: var(--font-serif);
+      font-size: 24px;
+      font-weight: 400;
+      letter-spacing: 2px;
+      color: #d1fae5;
+      text-shadow: 0 0 18px rgba(16, 185, 129, 0.55);
+    }
+
+    .adventure-box span {
+      font-size: 10px;
+      color: var(--badge-green-text);
+      letter-spacing: 1.5px;
+      margin-top: 3px;
+      opacity: 0.85;
+    }
+
+    /* Швидка панель профілю/персонажа для тесту і синхронізації */
+    .char-quick-sync {
+      background: var(--bg-panel-inner);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .char-quick-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .char-quick-row input[type="text"] {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      border-radius: 5px;
+      padding: 4px 8px;
+      font-size: 11px;
+      width: 135px;
+      outline: none;
+    }
+
+    .char-quick-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent-green);
+      cursor: pointer;
+    }
+
+    /* Чат з гравцями (Лівий нижній кут) */
+    .chat-card {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 4px;
+    }
+
+    .chat-item {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .chat-author {
+      background: rgba(255, 255, 255, 0.07);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .chat-text {
+      color: var(--text-main);
+      word-break: break-word;
+    }
+
+    .chat-input-wrap {
+      display: flex;
+      align-items: center;
+      background: var(--bg-panel-inner);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 4px 6px 4px 10px;
+      margin-top: 4px;
+    }
+
+    .chat-input-wrap input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .chat-send-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    .chat-send-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* ==================== ЦЕНТРАЛЬНА СЦЕНА: ІГРОВИЙ СТІЛ ==================== */
+    .table-stage {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 0;
+    }
+
+    .table-assembly {
+      position: relative;
+      width: min(100%, 740px);
+      height: min(100%, 540px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Овальний стіл у перспективі (як на макеті) */
+    .game-table-oval {
+      position: relative;
+      width: 68%;
+      height: 58%;
+      border-radius: 50%;
+      background:
+        radial-gradient(ellipse at 50% 45%, rgba(36, 48, 38, 0.85) 0%, rgba(19, 23, 20, 0.96) 65%, #111315 100%);
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      box-shadow:
+        0 30px 70px rgba(0, 0, 0, 0.9),
+        inset 0 0 45px rgba(0, 0, 0, 0.8),
+        inset 0 2px 12px rgba(110, 231, 183, 0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 4;
+    }
+
+    /* Декоративні аркуші/предмети на столі */
+    .table-inner-ring {
+      width: 72%;
+      height: 68%;
+      border-radius: 50%;
+      border: 1px dashed rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .table-center-plus {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(20, 22, 25, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: var(--text-main);
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform 0.15s, border-color 0.15s;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    }
+
+    .table-center-plus:hover {
+      transform: scale(1.08);
+      border-color: var(--accent-green);
+    }
+
+    /* ==================== МІСЦЯ НАВКОЛО СТОЛУ (КРІСЛА + КАРТКИ) ==================== */
+    .seat-node {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      z-index: 10;
+      width: 155px;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+
+    .seat-node:hover {
+      transform: translateY(-2px);
+    }
+
+    /* Силует крісла позаду гравця */
+    .chair-back {
+      position: absolute;
+      top: -14px;
+      width: 68px;
+      height: 44px;
+      border-radius: 14px 14px 6px 6px;
+      background: linear-gradient(180deg, #23252a 0%, #141518 100%);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.7);
+      z-index: -1;
+    }
+
+    /* Крісло Майстра (більше, зверху по центру) */
+    .seat-node[data-seat="gm"] {
+      top: 4px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 175px;
+    }
+    .seat-node[data-seat="gm"]:hover {
+      transform: translateX(-50%) translateY(-2px);
+    }
+    .seat-node[data-seat="gm"] .chair-back {
+      width: 86px;
+      height: 56px;
+      top: -18px;
+      border-color: rgba(110, 231, 183, 0.2);
+    }
+
+    /* Розташування 5 крісел гравців навколо столу (як на скріншоті) */
+    .seat-node[data-seat="seat1"] { top: 25%; left: 10px; }
+    .seat-node[data-seat="seat2"] { top: 25%; right: 10px; }
+    .seat-node[data-seat="seat3"] { bottom: 38px; left: 55px; }
+    .seat-node[data-seat="seat4"] { bottom: 8px; left: 50%; transform: translateX(-50%); }
+    .seat-node[data-seat="seat4"]:hover { transform: translateX(-50%) translateY(-2px); }
+    .seat-node[data-seat="seat5"] { bottom: 38px; right: 55px; }
+
+    /* Відео / Аватар кружок або міні-екран */
+    .seat-media-frame {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: #181a1e;
+      border: 2px solid rgba(255, 255, 255, 0.14);
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
+      transition: width 0.25s, height 0.25s, border-radius 0.25s, border-color 0.15s, box-shadow 0.15s;
+    }
+
+    /* Коли увімкнено відеопотік — розширюємо в охайний міні-екран бодікамери */
+    .seat-node.has-video .seat-media-frame {
+      width: 132px;
+      height: 88px;
+      border-radius: 10px;
+    }
+
+    /* Індикатор мовлення */
+    .seat-node.speaking .seat-media-frame {
+      border-color: var(--accent-green);
+      box-shadow: 0 0 18px rgba(16, 185, 129, 0.65);
+    }
+
+    .seat-media-frame video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    .seat-node.has-video .seat-media-frame video {
+      display: block;
+    }
+
+    .seat-avatar-fallback {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+
+    .seat-node.occupied .seat-avatar-fallback {
+      color: var(--badge-green-text);
+    }
+
+    .seat-node.has-video .seat-avatar-fallback {
+      display: none;
+    }
+
+    /* Плашка з ім'ям (@name) */
+    .seat-name-pill {
+      background: rgba(24, 25, 29, 0.92);
+      border: 1px solid var(--border-subtle);
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-main);
+      max-width: 150px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+    }
+
+    /* Статус + Міні-бар HP під ім'ям */
+    .seat-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .seat-status-badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+    }
+
+    .seat-node.occupied .seat-status-badge {
+      background: var(--badge-green-bg);
+      color: var(--badge-green-text);
+    }
+
+    .seat-hp-pill {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #a7f3d0;
+      display: none;
+    }
+
+    .seat-node.occupied .seat-hp-pill {
+      display: inline-block;
+    }
+
+    /* ==================== ПРАВА КОЛОНКА: КІМНАТА ТА ТАЙМЕР ==================== */
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      gap: 8px;
+    }
+
+    .setting-row span {
+      white-space: nowrap;
+    }
+
+    .setting-control {
+      background: var(--bg-panel-inner);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      width: 135px;
+      outline: none;
+      text-align: center;
+    }
+
+    /* Картка Очікуємо гравців + Годинник 20:00 + Почати гру */
+    .lobby-card {
+      gap: 12px;
+    }
+
+    .copy-link-btn {
+      align-self: flex-start;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .copy-link-btn:hover {
+      color: var(--text-main);
+      border-color: var(--border-hover);
+    }
+
+    .big-clock {
+      font-size: 38px;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: 1px;
+      line-height: 1;
+      margin: 4px 0;
+    }
+
+    .primary-cta-btn {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: none;
+      background: var(--cta-cream);
+      color: var(--cta-text);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .primary-cta-btn:hover {
+      background: var(--cta-cream-hover);
+    }
+
+    .primary-cta-btn:active {
+      transform: scale(0.99);
+    }
+
+    .media-controls-bar {
+      display: flex;
+      gap: 6px;
+    }
+
+    .media-controls-bar button {
+      flex: 1;
+    }
+
+    @media (max-width: 1024px) {
+      html, body { overflow-y: auto; }
+      .room-layout {
+        grid-template-columns: 1fr;
+        overflow-y: visible;
+      }
+      .table-stage {
+        height: 470px;
+        order: -1;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ВЕРХНЯ ПАНЕЛЬ СИНХРОНІЗАЦІЇ -->
+  <header class="top-bar">
+    <div class="top-bar-left">
+      <span class="top-title">Компанія «ЕНТРОПІЯ» — Стіл зв'язку</span>
+      <div class="sync-pill">
+        <span class="sync-dot" id="network-dot"></span>
+        <span id="network-status">Підключення до мережі...</span>
+      </div>
+    </div>
+
+    <div class="top-bar-right">
+      <span style="font-size: 11px; color: var(--text-muted);" id="synced-devices-count">Пристроїв онлайн: 1</span>
+      <button class="small-btn" id="btn-switch-role">Роль: Гравець</button>
+    </div>
+  </header>
+
+  <!-- ОСНОВНИЙ ПРОСТІР (ЗА МАКЕТОМ) -->
+  <main class="room-layout">
+
+    <!-- ЛІВА КОЛОНКА: Пригода «ЕНТРОПІЯ» + Жива синхронізація персонажа + Чат -->
+    <aside class="column-side">
+      <div class="glass-card">
+        <div class="card-header">
+          <span>Пригода</span>
+          <span style="font-size: 11px; color: var(--badge-green-text);">Синхронізовано</span>
+        </div>
+
+        <div class="adventure-box">
+          <h1>«ЕНТРОПІЯ»</h1>
+          <span id="room-subtitle">СЕКТОР СИНХРОНІЗАЦІЇ</span>
+        </div>
+
+        <!-- Живе керування даними свого бійця (миттєво летить на всі інші пристрої) -->
+        <div class="char-quick-sync">
+          <div class="char-quick-row">
+            <span>Ваш позивний:</span>
+            <input type="text" id="local-char-name" value="Оперативник" maxlength="22" />
+          </div>
+          <div class="char-quick-row">
+            <span>HP (<b id="local-hp-label">100</b>%):</span>
+            <input type="range" id="local-char-hp" min="0" max="100" value="100" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Чат з гравцями -->
+      <div class="glass-card chat-card">
+        <div class="card-header">
+          <span>Чат з гравцями</span>
+          <span style="font-size: 11px; color: var(--text-muted);">Міжпристроєвий</span>
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-item">
+            <span class="chat-author">@система</span>
+            <span class="chat-text">Кімната «ЕНТРОПІЯ» активна. Клікніть на будь-яке вільне крісло за столом, щоб зайняти місце.</span>
+          </div>
+        </div>
+
+        <div class="chat-input-wrap">
+          <input type="text" id="chat-input" placeholder="Відправити повідомлення..." maxlength="180" />
+          <button class="chat-send-btn" id="btn-chat-send">↑</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ЦЕНТРАЛЬНА СЦЕНА: ІГРОВИЙ СТІЛ ІЗ КРІСЛАМИ -->
+    <section class="table-stage">
+      <div class="table-assembly">
+
+        <!-- Крісло Майстра (Зверху по центру) -->
+        <div class="seat-node" data-seat="gm" id="seat-gm">
+          <div class="chair-back"></div>
+          <div class="seat-media-frame">
+            <video id="video-gm" playsinline autoplay></video>
+            <span class="seat-avatar-fallback">GM</span>
+          </div>
+          <div class="seat-name-pill" id="name-gm">Місце Майстра</div>
+          <div class="seat-meta-row">
+            <span class="seat-status-badge" id="status-gm">Очікуємо</span>
+            <span class="seat-hp-pill" id="hp-gm">GM</span>
+          </div>
+        </div>
+
+        <!-- Крісло Гравця 1 (Ліворуч зверху) -->
+        <div class="seat-node" data-seat="seat1" id="seat-seat1">
+          <div class="chair-back"></div>
+          <div class="seat-media-frame">
+            <video id="video-seat1" playsinline autoplay></video>
+            <span class="seat-avatar-fallback">I</span>
+          </div>
+          <div class="seat-name-pill" id="name-seat1">Вільне місце</div>
+          <div class="seat-meta-row">
+            <span class="seat-status-badge" id="status-seat1">Очікуємо</span>
+            <span class="seat-hp-pill" id="hp-seat1">100% HP</span>
+          </div>
+        </div>
+
+        <!-- Крісло Гравця 2 (Праворуч зверху) -->
+        <div class="seat-node" data-seat="seat2" id="seat-seat2">
+          <div class="chair-back"></div>
+          <div class="seat-media-frame">
+            <video id="video-seat2" playsinline autoplay></video>
+            <span class="seat-avatar-fallback">II</span>
+          </div>
+          <div class="seat-name-pill" id="name-seat2">Вільне місце</div>
+          <div class="seat-meta-row">
+            <span class="seat-status-badge" id="status-seat2">Очікуємо</span>
+            <span class="seat-hp-pill" id="hp-seat2">100% HP</span>
+          </div>
+        </div>
+
+        <!-- Крісло Гравця 3 (Ліворуч знизу) -->
+        <div class="seat-node" data-seat="seat3" id="seat-seat3">
+          <div class="chair-back"></div>
+          <div class="seat-media-frame">
+            <video id="video-seat3" playsinline autoplay></video>
+            <span class="seat-avatar-fallback">III</span>
+          </div>
+          <div class="seat-name-pill" id="name-seat3">Вільне місце</div>
+          <div class="seat-meta-row">
+            <span class="seat-status-badge" id="status-seat3">Очікуємо</span>
+            <span class="seat-hp-pill" id="hp-seat3">100% HP</span>
+          </div>
+        </div>
+
+        <!-- Крісло Гравця 4 (Знизу по центру) -->
+        <div class="seat-node" data-seat="seat4" id="seat-seat4">
+          <div class="chair-back"></div>
+          <div class="seat-media-frame">
+            <video id="video-seat4" playsinline autoplay></video>
+            <span class="seat-avatar-fallback">IV</span>
+          </div>
+          <div class="seat-name-pill" id="name-seat4">Вільне місце</div>
+          <div class="seat-meta-row">
+            <span class="seat-status-badge" id="status-seat4">Очікуємо</span>
+            <span class="seat-hp-pill" id="hp-seat4">100% HP</span>
+          </div>
+        </div>
+
+        <!-- Крісло Гравця 5 (Праворуч знизу) -->
+        <div class="seat-node" data-seat="seat5" id="seat-seat5">
+          <div class="chair-back"></div>
+          <div class="seat-media-frame">
+            <video id="video-seat5" playsinline autoplay></video>
+            <span class="seat-avatar-fallback">V</span>
+          </div>
+          <div class="seat-name-pill" id="name-seat5">Вільне місце</div>
+          <div class="seat-meta-row">
+            <span class="seat-status-badge" id="status-seat5">Очікуємо</span>
+            <span class="seat-hp-pill" id="hp-seat5">100% HP</span>
+          </div>
+        </div>
+
+        <!-- Сам круглий стіл -->
+        <div class="game-table-oval">
+          <div class="table-inner-ring">
+            <button class="table-center-plus" id="btn-center-seat" title="Зайняти вільне місце за столом">+</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ПРАВА КОЛОНКА: Налаштування Кімнати + Очікуємо гравців -->
+    <aside class="column-side">
+      <div class="glass-card">
+        <div class="card-header">
+          <span>Кімната</span>
+        </div>
+
+        <div class="setting-row">
+          <span>Код кімнати</span>
+          <input type="text" class="setting-control" id="room-code-input" value="entropia-1" />
+        </div>
+
+        <div class="setting-row">
+          <span>Мікрофон</span>
+          <select class="setting-control" id="select-mic">
+            <option value="">Стандартний</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <span>Вивід звуку</span>
+          <select class="setting-control" id="select-speaker">
+            <option value="default">Системний</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <span>Камера</span>
+          <select class="setting-control" id="select-cam">
+            <option value="">Стандартна</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Нижня права картка (як на прототипі) -->
+      <div class="glass-card lobby-card">
+        <div class="card-header">
+          <span id="lobby-status-title">Очікуємо гравців</span>
+        </div>
+
+        <button class="copy-link-btn" id="btn-copy-room-link">
+          🔗 Копіювати посилання
+        </button>
+
+        <div class="big-clock" id="session-clock">00:00</div>
+
+        <div class="media-controls-bar">
+          <button class="small-btn" id="btn-mic-toggle">🎤 Мікр: ВИМК</button>
+          <button class="small-btn" id="btn-cam-toggle">📷 Кам: ВИМК</button>
+        </div>
+
+        <button class="primary-cta-btn" id="btn-join-game">
+          Увійти в гру (Камера / Звук)
+        </button>
+      </div>
+    </aside>
+
+  </main>
+
+  <script>
+    /**
+     * =====================================================================
+     * ЯДРО МІЖПРИСТРОЄВОЇ СИНХРОНІЗАЦІЇ «ЕНТРОПІЯ» (MQTT + WebRTC + Bridge)
+     * Працює між телефонами, планшетами та ПК у реальному часі
+     * =====================================================================
+     */
+    class EntropiaAetherHub {
+      constructor() {
+        // Постійний ID пристрою в межах вкладки/сесії
+        this.deviceId = sessionStorage.getItem('entropia_device_id') || ('dev_' + Math.random().toString(36).substring(2, 9));
+        sessionStorage.setItem('entropia_device_id', this.deviceId);
+
+        const urlParams = new URLSearchParams(window.location.search);
+        this.roomId = (urlParams.get('room') || 'entropia-1').trim();
+        document.getElementById('room-code-input').value = this.roomId;
+
+        // Локальний стан гравця
+        this.localState = {
+          deviceId: this.deviceId,
+          name: 'Оперативник',
+          hp: 100,
+          maxHp: 100,
+          role: 'player',
+          seat: null, // 'gm', 'seat1'..'seat5'
+          inGame: false,
+          hasVideo: false,
+          ts: Date.now()
+        };
+
+        // Таблиця всіх підключених пристроїв у кімнаті: deviceId -> state
+        this.remoteDevices = new Map();
+        // WebRTC з'єднання: remoteDeviceId -> { pc, iceQueue, stream }
+        this.peers = new Map();
+        this.localStream = null;
+        this.audioContext = null;
+        this.analysers = new Map();
+
+        this.rtcConfig = {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        };
+
+        this.loadFromBridgeOrStorage();
+        this.bindUI();
+        this.connectMQTT();
+        this.initMediaDevicesList();
+        this.startTimers();
+      }
+
+      // 1. Зчитування даних із Листа Персонажа (entropia_bridge.js або localStorage)
+      loadFromBridgeOrStorage() {
+        try {
+          const savedRole = sessionStorage.getItem('entropia_user_role') || localStorage.getItem('entropia_user_role');
+          if (savedRole === 'gm') {
+            this.localState.role = 'gm';
+            this.localState.seat = 'gm';
+          }
+
+          const rawChar = localStorage.getItem('entropia_active_character');
+          if (rawChar) {
+            const c = JSON.parse(rawChar);
+            if (c.name || c.callsign) this.localState.name = c.name || c.callsign;
+            if (c.hp !== undefined) this.localState.hp = Number(c.hp);
+            if (c.maxHp !== undefined) this.localState.maxHp = Number(c.maxHp) || 100;
+          }
+        } catch (_) {}
+
+        // Автоматичний вибір початкового місця, якщо ще не зайняте
+        if (!this.localState.seat) {
+          this.localState.seat = this.localState.role === 'gm' ? 'gm' : 'seat1';
+        }
+
+        document.getElementById('local-char-name').value = this.localState.name;
+        const hpPct = this.getHpPercent(this.localState);
+        document.getElementById('local-char-hp').value = hpPct;
+        document.getElementById('local-hp-label').textContent = hpPct;
+        this.updateRoleButtonUI();
+
+        // Слухаємо події від Листа Персонажа на цьому пристрої
+        window.addEventListener('message', (e) => {
+          if (e.data && e.data.type === 'CHARACTER_UPDATE' && e.data.character) {
+            this.applyLocalCharacterUpdate(e.data.character, e.data.role);
+          }
+        });
+
+        if (window.EntropiaBridge && typeof window.EntropiaBridge.on === 'function') {
+          window.EntropiaBridge.on('characterUpdate', (char) => {
+            this.applyLocalCharacterUpdate(char);
+          });
+          window.EntropiaBridge.on('roleChange', (role) => {
+            this.localState.role = role;
+            if (role === 'gm') this.claimSeat('gm');
+            this.updateRoleButtonUI();
+          });
+        }
+      }
+
+      applyLocalCharacterUpdate(char, role) {
+        if (!char) return;
+        if (char.name || char.callsign) {
+          this.localState.name = char.name || char.callsign;
+          document.getElementById('local-char-name').value = this.localState.name;
+        }
+        if (char.hp !== undefined) this.localState.hp = Number(char.hp);
+        if (char.maxHp !== undefined) this.localState.maxHp = Number(char.maxHp) || 100;
+        if (role) this.localState.role = role;
+
+        const pct = this.getHpPercent(this.localState);
+        document.getElementById('local-char-hp').value = pct;
+        document.getElementById('local-hp-label').textContent = pct;
+
+        this.publishPresence();
+        this.renderAllSeats();
+      }
+
+      getHpPercent(state) {
+        const max = Number(state.maxHp) || 100;
+        const cur = Number(state.hp ?? 100);
+        return Math.max(0, Math.min(100, Math.round((cur / max) * 100)));
+      }
+
+      // 2. Підключення до MQTT брокера для синхронізації між різними пристроями
+      connectMQTT() {
+        if (this.mqttClient) {
+          try { this.mqttClient.end(true); } catch (_) {}
+        }
+
+        const baseTopic = `entropia_ark_317/room/${this.roomId}`;
+        this.presenceTopicPrefix = `${baseTopic}/presence/`;
+        this.signalTopic = `${baseTopic}/signal`;
+        this.chatTopic = `${baseTopic}/chat`;
+
+        this.setNetworkStatus('Підключення...', false);
+
+        this.mqttClient = window.mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+          clientId: 'entropia_' + this.deviceId + '_' + Math.floor(Math.random() * 1000),
+          clean: true,
+          reconnectPeriod: 3000,
+          will: {
+            topic: this.presenceTopicPrefix + this.deviceId,
+            payload: JSON.stringify({ deviceId: this.deviceId, offline: true }),
+            qos: 0,
+            retain: true
+          }
+        });
+
+        this.mqttClient.on('connect', () => {
+          this.setNetworkStatus(`Онлайн (${this.roomId})`, true);
+          // Підписка на всі присутні пристрої в кімнаті (включно з retained повідомленнями)
+          this.mqttClient.subscribe(`${this.presenceTopicPrefix}+`, { qos: 0 });
+          this.mqttClient.subscribe(this.signalTopic, { qos: 0 });
+          this.mqttClient.subscribe(this.chatTopic, { qos: 0 });
+
+          this.publishPresence();
+        });
+
+        this.mqttClient.on('message', (topic, payload) => {
+          try {
+            const data = JSON.parse(payload.toString());
+            if (topic.startsWith(this.presenceTopicPrefix)) {
+              this.handleRemotePresence(data);
+            } else if (topic === this.signalTopic) {
+              this.handleWebRTCSignal(data);
+            } else if (topic === this.chatTopic) {
+              if (data.deviceId !== this.deviceId) {
+                this.appendChatMessage(data.author, data.text);
+              }
+            }
+          } catch (_) {}
+        });
+
+        this.mqttClient.on('offline', () => {
+          this.setNetworkStatus('Офлайн (Перепідключення...)', false);
+        });
+      }
+
+      // Публікація свого стану з прапором retain: true, щоб нові пристрої миттєво бачили всіх у кімнаті
+      publishPresence() {
+        this.localState.ts = Date.now();
+        if (this.mqttClient && this.mqttClient.connected) {
+          this.mqttClient.publish(
+            this.presenceTopicPrefix + this.deviceId,
+            JSON.stringify(this.localState),
+            { qos: 0, retain: true }
+          );
+        }
+        this.syncAllCharactersToBridge();
+      }
+
+      handleRemotePresence(data) {
+        if (!data || !data.deviceId || data.deviceId === this.deviceId) return;
+
+        // Якщо пристрій вийшов або не оновлювався більше 25 секунд
+        if (data.offline || (data.ts && Date.now() - data.ts > 25000)) {
+          this.remoteDevices.delete(data.deviceId);
+          this.closePeer(data.deviceId);
+          this.renderAllSeats();
+          this.syncAllCharactersToBridge();
+          return;
+        }
+
+        // Якщо наше поточне місце вже було зайняте кимось раніше — автоматично сідаємо на вільне
+        if (data.seat === this.localState.seat && data.deviceId < this.deviceId) {
+          this.autoPickFreeSeat();
+        }
+
+        const isNewDevice = !this.remoteDevices.has(data.deviceId);
+        this.remoteDevices.set(data.deviceId, data);
+        this.renderAllSeats();
+        this.syncAllCharactersToBridge();
+
+        // Якщо обидва пристрої активували медіа або це новий пристрій — встановлюємо WebRTC P2P
+        if (isNewDevice || (data.inGame && !this.peers.has(data.deviceId))) {
+          if (this.deviceId > data.deviceId) {
+            this.initiateWebRTCOffer(data.deviceId);
+          }
+        }
+      }
+
+      autoPickFreeSeat() {
+        const occupied = new Set();
+        this.remoteDevices.forEach((d) => {
+          if (d.seat) occupied.add(d.seat);
+        });
+        const order = this.localState.role === 'gm'
+          ? ['gm', 'seat1', 'seat2', 'seat3', 'seat4', 'seat5']
+          : ['seat1', 'seat2', 'seat3', 'seat4', 'seat5'];
+        const free = order.find((s) => !occupied.has(s));
+        if (free && free !== this.localState.seat) {
+          this.localState.seat = free;
+          this.publishPresence();
+        }
+      }
+
+      claimSeat(seatId) {
+        // Перевіряємо, чи не сидить там інший гравець
+        for (const [, dev] of this.remoteDevices.entries()) {
+          if (dev.seat === seatId) {
+            alert(`Це крісло вже зайняте гравцем ${dev.name}`);
+            return;
+          }
+        }
+        this.localState.seat = seatId;
+        this.localState.inGame = true;
+        this.publishPresence();
+        this.renderAllSeats();
+      }
+
+      // Відправка зведеного списку всіх персонажів із різних телефонів у EntropiaBridge (для Карти і Листа)
+      syncAllCharactersToBridge() {
+        const allChars = [
+          {
+            id: this.deviceId,
+            name: this.localState.name,
+            hp: this.localState.hp,
+            maxHp: this.localState.maxHp,
+            seat: this.localState.seat,
+            role: this.localState.role
+          }
+        ];
+
+        this.remoteDevices.forEach((d) => {
+          allChars.push({
+            id: d.deviceId,
+            name: d.name,
+            hp: d.hp,
+            maxHp: d.maxHp || 100,
+            seat: d.seat,
+            role: d.role
+          });
+        });
+
+        localStorage.setItem('entropia_all_characters', JSON.stringify(allChars));
+        if ('BroadcastChannel' in window) {
+          const bc = new BroadcastChannel('entropia_ark_sync_channel');
+          bc.postMessage({ type: 'ALL_CHARACTERS_SYNC', characters: allChars });
+          bc.close();
+        }
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'ALL_CHARACTERS_SYNC', characters: allChars }, '*');
+        }
+      }
+
+      // 3. Рендеринг усіх крісел навколо столу
+      renderAllSeats() {
+        const allSeats = ['gm', 'seat1', 'seat2', 'seat3', 'seat4', 'seat5'];
+        const seatMap = new Map();
+
+        if (this.localState.seat) {
+          seatMap.set(this.localState.seat, { ...this.localState, isLocal: true });
+        }
+        this.remoteDevices.forEach((dev) => {
+          if (dev.seat && !seatMap.has(dev.seat)) {
+            seatMap.set(dev.seat, { ...dev, isLocal: false });
+          }
+        });
+
+        allSeats.forEach((seatId) => {
+          const node = document.getElementById(`seat-${seatId}`);
+          const nameEl = document.getElementById(`name-${seatId}`);
+          const statusEl = document.getElementById(`status-${seatId}`);
+          const hpEl = document.getElementById(`hp-${seatId}`);
+          const videoEl = document.getElementById(`video-${seatId}`);
+
+          const occupant = seatMap.get(seatId);
+
+          if (!occupant) {
+            node.classList.remove('occupied', 'has-video', 'speaking');
+            nameEl.textContent = seatId === 'gm' ? 'Місце Майстра' : 'Вільне місце';
+            statusEl.textContent = 'Очікуємо';
+            if (videoEl && videoEl.srcObject) videoEl.srcObject = null;
+            return;
+          }
+
+          node.classList.add('occupied');
+          nameEl.textContent = `@${occupant.name}${occupant.isLocal ? ' (Ви)' : ''}`;
+          statusEl.textContent = occupant.inGame ? 'В грі' : 'Онлайн';
+          hpEl.textContent = `${this.getHpPercent(occupant)}% HP`;
+
+          if (occupant.isLocal) {
+            if (this.localStream && this.localState.hasVideo) {
+              node.classList.add('has-video');
+              videoEl.muted = true;
+              if (videoEl.srcObject !== this.localStream) videoEl.srcObject = this.localStream;
+            } else {
+              node.classList.remove('has-video');
+            }
+          } else {
+            const peer = this.peers.get(occupant.deviceId);
+            if (peer && peer.stream && occupant.hasVideo) {
+              node.classList.add('has-video');
+              videoEl.muted = false;
+              if (videoEl.srcObject !== peer.stream) videoEl.srcObject = peer.stream;
+            } else {
+              node.classList.remove('has-video');
+            }
+          }
+        });
+
+        const totalOnline = 1 + this.remoteDevices.size;
+        document.getElementById('synced-devices-count').textContent = `Пристроїв онлайн: ${totalOnline}`;
+        document.getElementById('lobby-status-title').textContent =
+          totalOnline > 1 ? `У кімнаті: ${totalOnline} учасників` : 'Очікуємо гравців';
+      }
+
+      // 4. WebRTC P2P Аудіо та Відео між пристроями
+      async startOrUpdateMedia() {
+        const micId = document.getElementById('select-mic').value;
+        const camId = document.getElementById('select-cam').value;
+
+        const constraints = {
+          video: {
+            width: { ideal: 320, max: 480 },
+            height: { ideal: 240, max: 360 },
+            frameRate: { ideal: 15, max: 20 }
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1
+          }
+        };
+
+        if (micId) constraints.audio.deviceId = { exact: micId };
+        if (camId) constraints.video.deviceId = { exact: camId };
+
+        try {
+          if (this.localStream) {
+            this.localStream.getTracks().forEach((t) => t.stop());
+          }
+          this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+          this.localState.hasVideo = this.localStream.getVideoTracks().length > 0;
+        } catch (err) {
+          try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({ audio: constraints.audio, video: false });
+            this.localState.hasVideo = false;
+          } catch (audioErr) {
+            alert('Не вдалося отримати доступ до мікрофона/камери. Перевірте дозволи браузера.');
+            return;
+          }
+        }
+
+        this.localState.inGame = true;
+        this.attachVoiceDetector(this.deviceId, this.localStream);
+        this.updateMediaButtonsUI();
+        this.publishPresence();
+        this.renderAllSeats();
+
+        // Додаємо треки всім підключеним пристроям і робимо ре-офер
+        this.remoteDevices.forEach((_, remoteId) => {
+          this.initiateWebRTCOffer(remoteId);
+        });
+      }
+
+      getOrCreatePeerConnection(remoteId) {
+        if (this.peers.has(remoteId)) return this.peers.get(remoteId);
+
+        const pc = new RTCPeerConnection(this.rtcConfig);
+        const peerObj = { pc, iceQueue: [], stream: null };
+        this.peers.set(remoteId, peerObj);
+
+        if (this.localStream) {
+          this.localStream.getTracks().forEach((track) => pc.addTrack(track, this.localStream));
+        }
+
+        pc.onicecandidate = (e) => {
+          if (e.candidate && this.mqttClient && this.mqttClient.connected) {
+            this.mqttClient.publish(
+              this.signalTopic,
+              JSON.stringify({
+                type: 'ICE',
+                from: this.deviceId,
+                to: remoteId,
+                candidate: e.candidate
+              })
+            );
+          }
+        };
+
+        pc.ontrack = (e) => {
+          const [remoteStream] = e.streams;
+          if (remoteStream) {
+            peerObj.stream = remoteStream;
+            this.attachVoiceDetector(remoteId, remoteStream);
+            this.renderAllSeats();
+          }
+        };
+
+        return peerObj;
+      }
+
+      async initiateWebRTCOffer(remoteId) {
+        const peerObj = this.getOrCreatePeerConnection(remoteId);
+        if (this.localStream) {
+          const senders = peerObj.pc.getSenders();
+          this.localStream.getTracks().forEach((track) => {
+            const found = senders.find((s) => s.track && s.track.kind === track.kind);
+            if (found) found.replaceTrack(track);
+            else peerObj.pc.addTrack(track, this.localStream);
+          });
+        }
+
+        const offer = await peerObj.pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+        await peerObj.pc.setLocalDescription(offer);
+
+        if (this.mqttClient && this.mqttClient.connected) {
+          this.mqttClient.publish(
+            this.signalTopic,
+            JSON.stringify({
+              type: 'OFFER',
+              from: this.deviceId,
+              to: remoteId,
+              sdp: peerObj.pc.localDescription
+            })
+          );
+        }
+      }
+
+      async handleWebRTCSignal(msg) {
+        if (!msg || msg.to !== this.deviceId || msg.from === this.deviceId) return;
+        const peerObj = this.getOrCreatePeerConnection(msg.from);
+
+        if (msg.type === 'OFFER') {
+          await peerObj.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          while (peerObj.iceQueue.length > 0) {
+            const c = peerObj.iceQueue.shift();
+            try { await peerObj.pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
+          }
+          const answer = await peerObj.pc.createAnswer();
+          await peerObj.pc.setLocalDescription(answer);
+          this.mqttClient.publish(
+            this.signalTopic,
+            JSON.stringify({
+              type: 'ANSWER',
+              from: this.deviceId,
+              to: msg.from,
+              sdp: peerObj.pc.localDescription
+            })
+          );
+        } else if (msg.type === 'ANSWER') {
+          await peerObj.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          while (peerObj.iceQueue.length > 0) {
+            const c = peerObj.iceQueue.shift();
+            try { await peerObj.pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
+          }
+        } else if (msg.type === 'ICE' && msg.candidate) {
+          if (peerObj.pc.remoteDescription && peerObj.pc.remoteDescription.type) {
+            try { await peerObj.pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (_) {}
+          } else {
+            peerObj.iceQueue.push(msg.candidate);
+          }
+        }
+      }
+
+      closePeer(remoteId) {
+        const peerObj = this.peers.get(remoteId);
+        if (peerObj) {
+          try { peerObj.pc.close(); } catch (_) {}
+          this.peers.delete(remoteId);
+        }
+        this.analysers.delete(remoteId);
+      }
+
+      // 5. Детектор мовлення для підсвічування рамки навколо гравця
+      attachVoiceDetector(id, stream) {
+        if (!stream || stream.getAudioTracks().length === 0) return;
+        try {
+          if (!this.audioContext) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            this.audioContext = new AudioCtx();
+          }
+          const src = this.audioContext.createMediaStreamSource(stream);
+          const analyser = this.audioContext.createAnalyser();
+          analyser.fftSize = 128;
+          src.connect(analyser);
+          this.analysers.set(id, {
+            analyser,
+            buf: new Uint8Array(analyser.frequencyBinCount)
+          });
+        } catch (_) {}
+      }
+
+      // 6. Прив'язка елементів інтерфейсу
+      bindUI() {
+        // Жива зміна імені персонажа (синхронізується на всі пристрої)
+        document.getElementById('local-char-name').addEventListener('input', (e) => {
+          this.localState.name = e.target.value.trim() || 'Оперативник';
+          localStorage.setItem('entropia_active_character', JSON.stringify({
+            name: this.localState.name,
+            hp: this.localState.hp,
+            maxHp: 100
+          }));
+          this.publishPresence();
+          this.renderAllSeats();
+        });
+
+        // Жива зміна HP (миттєво оновлює HP на всіх телефонах/ПК)
+        document.getElementById('local-char-hp').addEventListener('input', (e) => {
+          this.localState.hp = Number(e.target.value);
+          this.localState.maxHp = 100;
+          document.getElementById('local-hp-label').textContent = this.localState.hp;
+          localStorage.setItem('entropia_active_character', JSON.stringify({
+            name: this.localState.name,
+            hp: this.localState.hp,
+            maxHp: 100
+          }));
+          this.publishPresence();
+          this.renderAllSeats();
+        });
+
+        // Клік по будь-якому кріслу навколо столу — зайняти це місце
+        document.querySelectorAll('.seat-node').forEach((node) => {
+          node.addEventListener('click', () => {
+            const seatId = node.getAttribute('data-seat');
+            this.claimSeat(seatId);
+          });
+        });
+
+        // Центральний "+" на столі
+        document.getElementById('btn-center-seat').addEventListener('click', () => {
+          this.autoPickFreeSeat();
+          this.localState.inGame = true;
+          this.publishPresence();
+          this.renderAllSeats();
+        });
+
+        // Зміна коду кімнати
+        document.getElementById('room-code-input').addEventListener('change', (e) => {
+          this.roomId = e.target.value.trim() || 'entropia-1';
+          this.remoteDevices.clear();
+          this.peers.forEach((_, id) => this.closePeer(id));
+          this.connectMQTT();
+          this.renderAllSeats();
+        });
+
+        // Перемикання ролі Гравець / Майстер
+        document.getElementById('btn-switch-role').addEventListener('click', () => {
+          if (this.localState.role === 'gm') {
+            this.localState.role = 'player';
+            this.autoPickFreeSeat();
+          } else {
+            const pass = prompt('Введіть пароль Майстра («ентропія»):');
+            if (pass && pass.trim().toLowerCase() === 'ентропія') {
+              this.localState.role = 'gm';
+              this.claimSeat('gm');
+            } else if (pass !== null) {
+              alert('Невірний пароль.');
+            }
+          }
+          localStorage.setItem('entropia_user_role', this.localState.role);
+          this.updateRoleButtonUI();
+          this.publishPresence();
+          this.renderAllSeats();
+        });
+
+        // Кнопка «Увійти в гру (Камера / Звук)»
+        document.getElementById('btn-join-game').addEventListener('click', () => {
+          this.startOrUpdateMedia();
+        });
+
+        // Тумблери Мікрофона та Камери
+        document.getElementById('btn-mic-toggle').addEventListener('click', () => {
+          if (!this.localStream) return this.startOrUpdateMedia();
+          const track = this.localStream.getAudioTracks()[0];
+          if (track) track.enabled = !track.enabled;
+          this.updateMediaButtonsUI();
+        });
+
+        document.getElementById('btn-cam-toggle').addEventListener('click', () => {
+          if (!this.localStream) return this.startOrUpdateMedia();
+          const track = this.localStream.getVideoTracks()[0];
+          if (track) {
+            track.enabled = !track.enabled;
+            this.localState.hasVideo = track.enabled;
+            this.publishPresence();
+            this.renderAllSeats();
+          }
+          this.updateMediaButtonsUI();
+        });
+
+        // Копіювання посилання для відкриття на телефоні
+        document.getElementById('btn-copy-room-link').addEventListener('click', () => {
+          const url = new URL(window.location.href);
+          url.searchParams.set('room', this.roomId);
+          navigator.clipboard?.writeText(url.toString());
+          this.appendChatMessage('система', 'Посилання скопійовано! Відкрийте його на іншому пристрої.');
+        });
+
+        // Відправка чату між пристроями
+        const sendChat = () => {
+          const input = document.getElementById('chat-input');
+          const text = input.value.trim();
+          if (!text) return;
+          this.appendChatMessage(this.localState.name, text);
+          if (this.mqttClient && this.mqttClient.connected) {
+            this.mqttClient.publish(
+              this.chatTopic,
+              JSON.stringify({
+                deviceId: this.deviceId,
+                author: this.localState.name,
+                text
+              })
+            );
+          }
+          input.value = '';
+        };
+        document.getElementById('btn-chat-send').addEventListener('click', sendChat);
+        document.getElementById('chat-input').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') sendChat();
+        });
+
+        // При закритті вкладки — повідомляємо іншим пристроям, що місце звільнилося
+        window.addEventListener('beforeunload', () => {
+          if (this.mqttClient && this.mqttClient.connected) {
+            this.mqttClient.publish(
+              this.presenceTopicPrefix + this.deviceId,
+              JSON.stringify({ deviceId: this.deviceId, offline: true }),
+              { qos: 0, retain: true }
+            );
+          }
+        });
+      }
+
+      updateRoleButtonUI() {
+        const btn = document.getElementById('btn-switch-role');
+        const isGM = this.localState.role === 'gm';
+        btn.textContent = isGM ? 'Роль: Майстер (GM)' : 'Роль: Гравець';
+        btn.classList.toggle('active', isGM);
+      }
+
+      updateMediaButtonsUI() {
+        const micBtn = document.getElementById('btn-mic-toggle');
+        const camBtn = document.getElementById('btn-cam-toggle');
+        const micOn = this.localStream && this.localStream.getAudioTracks()[0]?.enabled;
+        const camOn = this.localStream && this.localStream.getVideoTracks()[0]?.enabled;
+
+        micBtn.textContent = micOn ? '🎤 Мікр: УВІМК' : '🔇 Мікр: ВИМК';
+        micBtn.classList.toggle('active', !!micOn);
+
+        camBtn.textContent = camOn ? '📷 Кам: УВІМК' : '🚫 Кам: ВИМК';
+        camBtn.classList.toggle('active', !!camOn);
+      }
+
+      async initMediaDevicesList() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        try {
+          const list = await navigator.mediaDevices.enumerateDevices();
+          const micSel = document.getElementById('select-mic');
+          const spkSel = document.getElementById('select-speaker');
+          const camSel = document.getElementById('select-cam');
+
+          list.forEach((d, i) => {
+            const opt = document.createElement('option');
+            opt.value = d.deviceId;
+            opt.textContent = d.label || `${d.kind} #${i + 1}`;
+            if (d.kind === 'audioinput') micSel.appendChild(opt);
+            if (d.kind === 'audiooutput') spkSel.appendChild(opt);
+            if (d.kind === 'videoinput') camSel.appendChild(opt);
+          });
+
+          spkSel.onchange = () => {
+            document.querySelectorAll('video').forEach((v) => {
+              if (typeof v.setSinkId === 'function' && !v.muted) {
+                v.setSinkId(spkSel.value).catch(() => {});
+              }
+            });
+          };
+        } catch (_) {}
+      }
+
+      appendChatMessage(author, text) {
+        const box = document.getElementById('chat-messages');
+        const row = document.createElement('div');
+        row.className = 'chat-item';
+        row.innerHTML = `<span class="chat-author">@${author}</span><span class="chat-text"></span>`;
+        row.querySelector('.chat-text').textContent = text;
+        box.appendChild(row);
+        box.scrollTop = box.scrollHeight;
+      }
+
+      setNetworkStatus(text, isOnline) {
+        document.getElementById('network-status').textContent = text;
+        document.getElementById('network-dot').classList.toggle('online', isOnline);
+      }
+
+      startTimers() {
+        const startTs = Date.now();
+
+        // Постійний Heartbeat кожні 4 секунди для живої синхронізації між пристроями
+        setInterval(() => {
+          this.publishPresence();
+        }, 4000);
+
+        // Таймер сесії (формат як на макеті 20:00)
+        setInterval(() => {
+          const sec = Math.floor((Date.now() - startTs) / 1000);
+          const m = String(Math.floor(sec / 60)).padStart(2, '0');
+          const s = String(sec % 60).padStart(2, '0');
+          document.getElementById('session-clock').textContent = `${m}:${s}`;
+        }, 1000);
+
+        // Цикл перевірки гучності голосу
+        const checkVoice = () => {
+          this.analysers.forEach(({ analyser, buf }, devId) => {
+            analyser.getByteFrequencyData(buf);
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) sum += buf[i];
+            const avg = sum / buf.length;
+
+            const seatId = devId === this.deviceId
+              ? this.localState.seat
+              : this.remoteDevices.get(devId)?.seat;
+            if (seatId) {
+              const node = document.getElementById(`seat-${seatId}`);
+              if (node) node.classList.toggle('speaking', avg > 16);
+            }
+          });
+          requestAnimationFrame(checkVoice);
+        };
+        requestAnimationFrame(checkVoice);
+
+        this.renderAllSeats();
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      window.EntropiaHub = new EntropiaAetherHub();
+    });
+  </script>
+</body>
+</html>
