@@ -1,0 +1,53 @@
+name: Build Rust WASM Modules
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'raphael_wasm/**'
+      - 'aether_wasm/**'
+      - '.github/workflows/build-raphael-wasm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build raphael_wasm
+        run: |
+          if [ -f "raphael_wasm/Cargo.toml" ]; then
+            wasm-pack build raphael_wasm --target web --out-dir pkg --release
+            rm -f raphael_wasm/pkg/.gitignore
+          fi
+
+      - name: Build aether_wasm (if present)
+        run: |
+          if [ -f "aether_wasm/Cargo.toml" ]; then
+            wasm-pack build aether_wasm --target web --out-dir pkg --release
+            rm -f aether_wasm/pkg/.gitignore
+          fi
+
+      - name: Commit and push compiled WASM packages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f raphael_wasm/pkg/ aether_wasm/pkg/ 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            git commit -m "🦀 Auto-build Rust WASM packages"
+            git push
+          fi
