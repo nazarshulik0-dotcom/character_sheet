@@ -1,0 +1,16 @@
+{
+  "name": "raphael_wasm",
+  "type": "module",
+  "description": "Rust/WASM Particle Morphing (Sphere -> Manas), Audio DSP & Instant VAD for Raphael AI",
+  "version": "1.0.0",
+  "files": [
+    "raphael_wasm_bg.wasm",
+    "raphael_wasm.js",
+    "raphael_wasm.d.ts"
+  ],
+  "main": "raphael_wasm.js",
+  "types": "raphael_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
