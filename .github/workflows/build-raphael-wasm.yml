@@ -1,12 +1,13 @@
-name: Build Rust WASM Modules
+name: Build Raphael Rust WASM
 
 on:
   push:
     branches:
       - main
+      - master
     paths:
-      - 'raphael_wasm/**'
-      - 'aether_wasm/**'
+      - 'raphael_wasm/Cargo.toml'
+      - 'raphael_wasm/src/**'
       - '.github/workflows/build-raphael-wasm.yml'
   workflow_dispatch:
 
@@ -15,40 +16,46 @@ permissions:
 
 jobs:
   build-wasm:
+    name: Compile raphael_wasm to WebAssembly
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+    steps:
+      - name: 1. Загрузка кода репозитория
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 2. Установка компилятора Rust и цели wasm32
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack
+      - name: 3. Кэширование зависимостей Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "raphael_wasm -> target"
+
+      - name: 4. Установка wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build raphael_wasm
+      - name: 5. Компиляция Rust в WebAssembly (Release Mode)
         run: |
-          cd raphael_wasm
-          wasm-pack build --target web --out-dir pkg --release
-          rm -f pkg/.gitignore
+          wasm-pack build raphael_wasm --target web --out-dir pkg --release
+          rm -f raphael_wasm/pkg/.gitignore
+          rm -f raphael_wasm/pkg/package.json
 
-      - name: Build aether_wasm (if present)
+      - name: 6. Авто-коммит готовых файлов .wasm и .js в репозиторий
         run: |
-          if [ -f "aether_wasm/Cargo.toml" ]; then
-            cd aether_wasm
-            wasm-pack build --target web --out-dir pkg --release
-            rm -f pkg/.gitignore
-          fi
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit and push compiled WASM packages
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f raphael_wasm/pkg/
-          if [ -d "aether_wasm/pkg" ]; then
-            git add -f aether_wasm/pkg/
+          git add -f raphael_wasm/pkg/*
+
+          if git diff --staged --quiet; then
+            echo "🟢 Бинарник WASM уже актуален, новый коммит не нужен."
+          else
+            git commit -m "⚙️ Auto-build raphael_wasm pkg"
+            git pull --rebase origin main
+            git push
+            echo "🚀 Скомпилированный raphael_wasm/pkg успешно обновлён!"
           fi
-          git status
-          git diff --staged --quiet || (git commit -m "🦀 Auto-build Rust WASM packages" && git push)
