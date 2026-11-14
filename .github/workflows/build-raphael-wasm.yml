@@ -30,24 +30,25 @@ jobs:
 
       - name: Build raphael_wasm
         run: |
-          if [ -f "raphael_wasm/Cargo.toml" ]; then
-            wasm-pack build raphael_wasm --target web --out-dir pkg --release
-            rm -f raphael_wasm/pkg/.gitignore
-          fi
+          cd raphael_wasm
+          wasm-pack build --target web --out-dir pkg --release
+          rm -f pkg/.gitignore
 
       - name: Build aether_wasm (if present)
         run: |
           if [ -f "aether_wasm/Cargo.toml" ]; then
-            wasm-pack build aether_wasm --target web --out-dir pkg --release
-            rm -f aether_wasm/pkg/.gitignore
+            cd aether_wasm
+            wasm-pack build --target web --out-dir pkg --release
+            rm -f pkg/.gitignore
           fi
 
       - name: Commit and push compiled WASM packages
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f raphael_wasm/pkg/ aether_wasm/pkg/ 2>/dev/null || true
-          if ! git diff --staged --quiet; then
-            git commit -m "🦀 Auto-build Rust WASM packages"
-            git push
+          git add -f raphael_wasm/pkg/
+          if [ -d "aether_wasm/pkg" ]; then
+            git add -f aether_wasm/pkg/
           fi
+          git status
+          git diff --staged --quiet || (git commit -m "🦀 Auto-build Rust WASM packages" && git push)
